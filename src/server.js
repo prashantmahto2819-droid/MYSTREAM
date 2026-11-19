@@ -27,6 +27,7 @@ const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm', '.json': 'application/json',
 };
 
 class HttpError extends Error {
@@ -639,7 +640,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     if (!file.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
       return send(res, 404, { error: 'Not found' });
     }
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' });
+    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': rel.startsWith('vendor/') ? 'public, max-age=86400' : 'no-store' });
     fs.createReadStream(file).pipe(res);
   };
 
@@ -648,7 +649,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('x-frame-options', 'DENY');
     res.setHeader('referrer-policy', 'no-referrer');
-    res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'");
+    res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'");
     try {
       const pathname = new URL(req.url, 'http://x').pathname;
       if ((req.method === 'GET' || req.method === 'HEAD') && !pathname.startsWith('/api/') && !pathname.startsWith('/internal/') && pathname !== '/healthz') {

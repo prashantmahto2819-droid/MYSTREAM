@@ -76,10 +76,50 @@ function drawPip(ctx, v) {
 
 // ---- background + green screen (removes a green backdrop behind the person, no AI needed) ----
 const bg = { mode: 'black', color: '#1d2b64', img: null };
+
+// ---- AI background (person cut-out with MediaPipe, loaded only when chosen; files are installed by the Docker build) ----
+const seg = { mode: 'none', model: null, loading: false, ready: false, busy: false, out: document.createElement('canvas') };
+seg.out.width = 960; seg.out.height = 540; const sctx = seg.out.getContext('2d');
+function loadScript(src) {
+  return new Promise((resolve, reject) => { const s = document.createElement('script'); s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('missing')); document.head.append(s); });
+}
+async function ensureSeg() {
+  if (seg.ready || seg.loading) return;
+  seg.loading = true; say('Loading AI background…');
+  try {
+    await loadScript('/vendor/selfie/selfie_segmentation.js');
+    const m = new window.SelfieSegmentation({ locateFile: (f) => `/vendor/selfie/${f}` });
+    m.setOptions({ modelSelection: 1 });
+    m.onResults((r) => {
+      sctx.save(); sctx.clearRect(0, 0, 960, 540);
+      sctx.drawImage(r.segmentationMask, 0, 0, 960, 540);
+      sctx.globalCompositeOperation = 'source-in'; sctx.drawImage(r.image, 0, 0, 960, 540);
+      if (seg.mode === 'blur') { sctx.globalCompositeOperation = 'destination-over'; sctx.filter = 'blur(14px)'; sctx.drawImage(r.image, 0, 0, 960, 540); }
+      sctx.restore(); seg.have = true;
+    });
+    await m.initialize(); seg.model = m; seg.ready = true; say('AI background ready.');
+    pumpSeg();
+  } catch {
+    say('AI background is not installed on this server (the Docker build needs internet). Green screen still works.');
+    $('st-cambg').value = 'none'; seg.mode = 'none';
+  } finally { seg.loading = false; }
+}
+async function pumpSeg() {
+  if (seg.busy || !seg.ready) return;
+  seg.busy = true;
+  try {
+    while (seg.mode !== 'none') {
+      if (st.camVideo?.videoWidth) await seg.model.send({ image: st.camVideo });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  } catch { say('AI background stopped.'); seg.mode = 'none'; $('st-cambg').value = 'none'; }
+  seg.busy = false;
+}
 const kc = document.createElement('canvas'); kc.width = 960; kc.height = 540; const kctx = kc.getContext('2d', { willReadFrequently: true });
 const keyedPip = document.createElement('canvas'); keyedPip.width = 960; keyedPip.height = 540;
 let lastKey = 0;
 function keyed(v) {
+  if (seg.mode !== 'none' && seg.ready && seg.have && v === st.camVideo) return seg.out;
   if (!$('st-key').checked || v !== st.camVideo || !v.videoWidth) return v;
   const stamp = performance.now();
   if (stamp - lastKey < 12) return kc; // already processed this frame
@@ -359,6 +399,11 @@ function init() {
   $('st-bg-file').addEventListener('change', (e) => {
     const f = e.target.files[0]; if (!f) return;
     const img = new Image(); img.onload = () => { bg.img = img; }; img.src = URL.createObjectURL(f);
+  });
+  $('st-cambg').addEventListener('change', async (e) => {
+    seg.mode = e.target.value;
+    if (seg.mode === 'none') return;
+    await ensureSeg(); if (seg.ready) pumpSeg();
   });
   $('st-rec').addEventListener('click', toggleRecord);
   $('st-start').addEventListener('click', goLive);

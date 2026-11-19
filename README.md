@@ -9,6 +9,8 @@ Self-hosted multistream relay (Restream-style) for a small office team.
 - **Connect YouTube / Facebook:** one-click "Create live" that creates the broadcast and adds the destination with its key.
 - **Standby screen:** if OBS drops, a standby slate keeps YouTube/Facebook connected for a few minutes (opt-in).
 - **Guests:** invite link; guests join from their browser and appear in your scenes.
+- **Look:** drag the small camera/logo/name bar on the preview; background colour/image; green screen; optional AI "remove my room" (blur or replace; installed by the Docker build when it has internet).
+- **Record from the studio** and keep the clip under Videos to schedule later.
 - **Recordings:** optional copy of your OBS lives (kept 7 days), downloadable, or reusable as a video for a later schedule.
 - **Other software:** API keys + a ready client (`client/`, `docs/API.md`) so Vividora can upload a finished render and schedule it.
 
