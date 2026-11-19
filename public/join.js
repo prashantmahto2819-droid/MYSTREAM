@@ -29,8 +29,12 @@ async function join() {
 async function start() {
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] });
   for (const t of media.getTracks()) pc.addTrack(t, media);
+  for (const x of pc.getTransceivers()) if (x.sender.track?.kind === 'video') x.direction = 'sendrecv'; // lets the host send the live output back
   pc.onicecandidate = (e) => { if (e.candidate) ws.send(JSON.stringify({ signal: { candidate: e.candidate } })); };
-  pc.ontrack = (e) => { $('g-remote').srcObject = e.streams[0]; };
+  pc.ontrack = (e) => {
+    if (e.track.kind === 'video') { $('g-program').srcObject = e.streams[0] || new MediaStream([e.track]); $('g-program').classList.remove('hidden'); }
+    else $('g-remote').srcObject = e.streams[0] || new MediaStream([e.track]);
+  };
   pc.onconnectionstatechange = () => {
     if (pc?.connectionState === 'connected') { say('Connected. You are in the studio.'); $('g-mute').classList.remove('hidden'); $('g-leave').classList.remove('hidden'); }
     if (pc?.connectionState === 'failed') say('Connection failed. Try another network or refresh.');

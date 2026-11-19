@@ -146,6 +146,8 @@ export class RelayManager {
     const args = buildArgs({ input, output });
 
     entry.stats = { bitrateKbps: null, speed: null, at: 0 };
+    entry.history = [];
+    entry.lastSample = 0;
     entry.slowSince = 0;
     entry.slowReported = false;
     let proc;
@@ -173,7 +175,14 @@ export class RelayManager {
         const k = line.slice(0, eq); const v = line.slice(eq + 1);
         if (k === 'bitrate' && v !== 'N/A') entry.stats.bitrateKbps = parseFloat(v) || 0;
         else if (k === 'speed' && v !== 'N/A') entry.stats.speed = parseFloat(v) || 0;
-        else if (k === 'progress') { entry.stats.at = Date.now(); this.checkSlow(entry); }
+        else if (k === 'progress') {
+          entry.stats.at = Date.now(); this.checkSlow(entry);
+          if (entry.stats.at - entry.lastSample >= 5000 && entry.stats.bitrateKbps !== null) { // one point per 5 s, last 5 minutes
+            entry.lastSample = entry.stats.at;
+            entry.history.push(Math.round(entry.stats.bitrateKbps));
+            if (entry.history.length > 60) entry.history.shift();
+          }
+        }
       }
     });
 
@@ -290,11 +299,12 @@ export class RelayManager {
 
   statusFor(destId) {
     const e = this.relays.get(destId);
-    if (!e) return { status: 'idle', error: null, since: null, restarts: 0, stats: null };
+    if (!e) return { status: 'idle', error: null, since: null, restarts: 0, stats: null, history: [] };
     const fresh = e.stats && Date.now() - e.stats.at < 15000;
     return {
       status: e.status, error: e.lastError, since: e.since, restarts: e.restarts,
       stats: fresh ? { bitrateKbps: e.stats.bitrateKbps, speed: e.stats.speed } : null,
+      history: fresh ? [...(e.history || [])] : [],
     };
   }
 }

@@ -98,6 +98,8 @@ export function openDb(dir) {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('record')) db.exec('ALTER TABLE users ADD COLUMN record INTEGER NOT NULL DEFAULT 0');
+  const dcols = db.prepare('PRAGMA table_info(destinations)').all().map((c) => c.name);
+  if (!dcols.includes('group_name')) db.exec("ALTER TABLE destinations ADD COLUMN group_name TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('standby')) db.exec('ALTER TABLE users ADD COLUMN standby INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('standby_text')) db.exec("ALTER TABLE users ADD COLUMN standby_text TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('standby_minutes')) db.exec('ALTER TABLE users ADD COLUMN standby_minutes INTEGER NOT NULL DEFAULT 10');
@@ -193,6 +195,7 @@ function makeStore(db) {
       if (f.platform !== undefined) q('UPDATE destinations SET platform=? WHERE id=?').run(f.platform, id);
       if (f.rtmpUrl !== undefined) q('UPDATE destinations SET rtmp_url=? WHERE id=?').run(f.rtmpUrl, id);
       if (f.keyEnc !== undefined) q('UPDATE destinations SET key_enc=? WHERE id=?').run(f.keyEnc, id);
+      if (f.groupName !== undefined) q('UPDATE destinations SET group_name=? WHERE id=?').run(f.groupName, id);
       if (f.enabled !== undefined) q('UPDATE destinations SET enabled=? WHERE id=?').run(f.enabled ? 1 : 0, id);
     },
     deleteDestination: (id) => q('DELETE FROM destinations WHERE id = ?').run(id),

@@ -111,6 +111,29 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     return { rtmpUrl: full.slice(0, i + 6), streamKey: full.slice(i + 6), platform: 'facebook', watchUrl: `https://www.facebook.com/${v.id}`, name: `Facebook: ${title}` };
   }
 
+  // ---- YouTube live chat (read) ----
+  const chatIds = new Map(); // connection id -> { id, exp }
+  async function youtubeChat(conn, pageToken = '') {
+    if (conn.provider !== 'google') throw new OAuthError('Chat is only available for YouTube accounts.');
+    const access = await googleAccess(conn);
+    const h = { authorization: `Bearer ${access}` };
+    const api = 'https://www.googleapis.com/youtube/v3';
+    let cached = chatIds.get(conn.id);
+    if (!cached || cached.exp < now()) {
+      const r = await call(`${api}/liveBroadcasts?` + form({ part: 'snippet', broadcastStatus: 'active', mine: 'true' }), { headers: h }, 'Finding your live');
+      const id = r.items?.[0]?.snippet?.liveChatId;
+      if (!id) throw new OAuthError('No live broadcast is active on this channel right now.');
+      cached = { id, exp: now() + 5 * 60000 }; chatIds.set(conn.id, cached);
+    }
+    const q = { liveChatId: cached.id, part: 'snippet,authorDetails', maxResults: '200' };
+    if (pageToken) q.pageToken = pageToken;
+    const r = await call(`${api}/liveChat/messages?` + form(q), { headers: h }, 'Reading chat');
+    return {
+      messages: (r.items || []).filter((m) => m.snippet?.displayMessage).map((m) => ({ id: m.id, author: m.authorDetails?.displayName || '', text: m.snippet.displayMessage })),
+      next: r.nextPageToken || '', waitMs: Math.max(Number(r.pollingIntervalMillis) || 5000, 3000),
+    };
+  }
+
   const create = (conn, opts) => (conn.provider === 'google' ? createYouTube(conn, opts) : createFacebook(conn, opts));
-  return { configured, authUrl, handleCallback, create, states };
+  return { configured, authUrl, handleCallback, create, youtubeChat, states };
 }

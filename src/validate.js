@@ -5,6 +5,10 @@ export const PRESETS = [
   { id: 'youtube-secure', label: 'YouTube (RTMPS)', url: 'rtmps://a.rtmps.youtube.com:443/live2' },
   { id: 'facebook', label: 'Facebook', url: 'rtmps://live-api-s.facebook.com:443/rtmp/' },
   { id: 'twitch', label: 'Twitch', url: 'rtmp://live.twitch.tv/app' },
+  { id: 'kick', label: 'Kick', url: 'rtmps://fa723fc1b171.global-contribute.live-video.net:443/app' },
+  { id: 'instagram', label: 'Instagram Live (paste server URL)', url: '' },
+  { id: 'x', label: 'X / Twitter Live (paste server URL)', url: '' },
+  { id: 'linkedin', label: 'LinkedIn Live (paste server URL)', url: '' },
   { id: 'custom', label: 'Custom RTMP', url: '' },
 ];
 

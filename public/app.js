@@ -29,6 +29,19 @@ function el(tag, props = {}, ...kids) {
   return n;
 }
 
+function sparkline(values) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 120 28'); svg.setAttribute('width', '120'); svg.setAttribute('height', '28'); svg.setAttribute('class', 'spark');
+  if (values.length < 2) return svg;
+  const max = Math.max(...values, 1);
+  const pts = values.map((v, i) => `${(i / (values.length - 1)) * 118 + 1},${27 - (v / max) * 25}`).join(' ');
+  const line = document.createElementNS(ns, 'polyline');
+  line.setAttribute('points', pts); line.setAttribute('fill', 'none'); line.setAttribute('stroke', 'currentColor'); line.setAttribute('stroke-width', '1.5');
+  svg.append(line);
+  return svg;
+}
+
 function showLogin() {
   clearInterval(pollTimer);
   $('app').classList.add('hidden');
@@ -73,10 +86,11 @@ async function refresh() {
   list.replaceChildren(...s.destinations.map((d) => {
     const st = d.status;
     const info = el('div', { class: 'grow' },
-      el('div', {}, d.name, me.role === 'admin' && d.user_id !== me.id ? ' (other user)' : ''),
+      el('div', {}, d.name, d.group_name ? el('span', { class: 'badge' }, d.group_name) : '', me.role === 'admin' && d.user_id !== me.id ? ' (other user)' : ''),
       el('div', { class: 'sub' }, d.rtmp_url),
       d.error ? el('div', { class: 'sub err-text' }, d.error) : '',
-      d.stats ? el('div', { class: 'sub' }, `${Math.round(d.stats.bitrateKbps || 0)} kbps · speed ${(d.stats.speed || 0).toFixed(2)}x`) : '');
+      d.stats ? el('div', { class: 'sub' }, `${Math.round(d.stats.bitrateKbps || 0)} kbps · speed ${(d.stats.speed || 0).toFixed(2)}x`) : '',
+      d.history?.length > 1 ? sparkline(d.history) : '');
     const toggle = el('label', { class: 'switch' },
       el('input', { type: 'checkbox', ...(d.enabled ? { checked: '' } : {}),
         onchange: async (e) => {
@@ -87,6 +101,11 @@ async function refresh() {
     return el('li', {}, info,
       el('span', { class: `badge ${st}` }, d.enabled ? STATUS_LABEL[st] : 'Off'),
       toggle,
+      el('button', { class: 'ghost', onclick: async () => {
+        const g = prompt('Group name (for example "News" or "All channels"). Leave empty to remove.', d.group_name || '');
+        if (g === null) return;
+        try { await api('PATCH', `/api/destinations/${d.id}`, { group_name: g }); await refresh(); } catch (err) { alert(err.message); }
+      } }, 'Group'),
       el('button', { class: 'danger', onclick: async () => {
         if (!confirm(`Delete "${d.name}"?`)) return;
         try { await api('DELETE', `/api/destinations/${d.id}`); await refresh(); } catch (err) { alert(err.message); }
@@ -166,12 +185,18 @@ function renderVideoChoices() {
 function renderScheduleChoices(dests) {
   const mine = dests.filter((d) => d.user_id === me.id);
   const box = $('sched-dests');
-  const sig = mine.map((d) => `${d.id}:${d.name}`).join(',');
+  const sig = mine.map((d) => `${d.id}:${d.name}:${d.group_name}`).join(',');
   if (box.dataset.sig === sig) return;
   const checked = new Set([...box.querySelectorAll('input:checked')].map((i) => Number(i.value)));
   box.dataset.sig = sig;
-  box.replaceChildren(...mine.map((d) => el('label', {},
-    el('input', { type: 'checkbox', value: d.id, ...(checked.has(d.id) ? { checked: '' } : {}) }), d.name)));
+  const groups = [...new Set(mine.map((d) => d.group_name).filter(Boolean))];
+  box.replaceChildren(
+    ...groups.map((g) => el('button', { type: 'button', class: 'ghost', onclick: () => {
+      const inputs = [...box.querySelectorAll('input')].filter((i) => mine.find((d) => d.id === Number(i.value))?.group_name === g);
+      const all = inputs.every((i) => i.checked); inputs.forEach((i) => { i.checked = !all; });
+    } }, `Group: ${g}`)),
+    ...mine.map((d) => el('label', {},
+      el('input', { type: 'checkbox', value: d.id, ...(checked.has(d.id) ? { checked: '' } : {}) }), d.name)));
   if (!mine.length) box.replaceChildren(el('span', { class: 'sub' }, 'Add a destination first.'));
 }
 

@@ -21,6 +21,8 @@ function fakeNet(log) {
     }
     if (u.includes('/youtube/v3/channels')) return J({ items: [{ id: 'UC123', snippet: { title: 'Tukur Tukoor' } }] });
     if (u.includes('/liveStreams')) return J({ id: 'S1', cdn: { ingestionInfo: { ingestionAddress: 'rtmp://a.rtmp.youtube.com/live2', streamName: 'abcd-1234' } } });
+    if (u.includes('/liveBroadcasts?') && u.includes('broadcastStatus=active')) return J({ items: globalThis.__noLive ? [] : [{ snippet: { liveChatId: 'LC1' } }] });
+    if (u.includes('/liveChat/messages')) return J({ items: [{ id: 'm1', snippet: { displayMessage: 'Namaste' }, authorDetails: { displayName: 'Ravi' } }, { id: 'm2', snippet: {}, authorDetails: {} }], nextPageToken: 'NP', pollingIntervalMillis: 1000 });
     if (u.includes('/liveBroadcasts/bind')) return J({ id: 'B1' });
     if (u.includes('/liveBroadcasts')) return J({ id: 'B1' });
     if (u.includes('graph.facebook.com') && u.includes('oauth/access_token')) return J({ access_token: u.includes('fb_exchange_token') ? 'LONG' : 'SHORT' });
@@ -144,4 +146,24 @@ test('oauth routes: start redirects, callback connects, go-live creates a destin
   assert.equal((await t.call('POST', `/api/connections/999/go-live`, { title: 'x' })).status, 404);
   assert.equal((await t.call('DELETE', `/api/connections/${conn.id}`)).status, 200);
   assert.equal((await (await t.call('GET', '/api/connections')).json()).connections.length, 0);
+});
+
+test('youtube chat: finds the live chat, returns clean messages, paging token and a safe wait', async () => {
+  const t = setup();
+  const state = new URL(t.oauth.authUrl('google', t.uid)).searchParams.get('state');
+  await t.oauth.handleCallback('google', { code: 'c', state }, t.uid);
+  const conn = t.store.listConnections(t.uid)[0];
+  const full = t.store.getConnection(conn.id);
+  const r = await t.oauth.youtubeChat(full, '');
+  assert.deepEqual(r.messages, [{ id: 'm1', author: 'Ravi', text: 'Namaste' }]);
+  assert.equal(r.next, 'NP'); assert.equal(r.waitMs, 3000, 'never faster than every 3 s');
+  await t.oauth.youtubeChat(full, 'NP');
+  assert.ok(t.log.at(-1)[1].includes('pageToken=NP') && t.log.at(-1)[1].includes('liveChatId=LC1'));
+  assert.equal(t.log.filter(([, u]) => u.includes('broadcastStatus=active')).length, 1, 'chat id cached');
+  globalThis.__noLive = true;
+  const t2 = setup();
+  const s2 = new URL(t2.oauth.authUrl('google', t2.uid)).searchParams.get('state');
+  await t2.oauth.handleCallback('google', { code: 'c', state: s2 }, t2.uid);
+  await assert.rejects(() => t2.oauth.youtubeChat(t2.store.getConnection(t2.store.listConnections(t2.uid)[0].id)), /No live broadcast/);
+  globalThis.__noLive = false;
 });

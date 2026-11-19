@@ -163,3 +163,13 @@ If the app restarts with "unable to open database file", the data folder belongs
 1. Vividora side: the "Schedule Live" button (how: docs/VIVIDORA.md)
 2. Destination groups, per-destination bitrate history
 3. Guest return video, Instagram and X destinations
+
+## Studio extras (ManyCam / Restream style)
+
+- Camera and microphone pickers, audio mixer (volume and mute per source), mirror and brightness/contrast/colour filters.
+- Media scene: play videos, photos and slides from your computer (arrow keys for next/previous).
+- Countdown timer or clock, drawing on screen, PNG snapshot, hotkeys (1-7 scenes, D drawing).
+- Destination groups, presets (Kick, Instagram, X, LinkedIn), bitrate sparklines, guest return video.
+- Live chat panel: YouTube (via a connected channel) and Twitch (read-only); press Show to put a message on the stream. Facebook chat is not supported.
+- A ManyCam-style virtual webcam cannot be made from a browser. Use OBS Virtual Camera or a separate native app for that.
+- Modern dark UI (glass cards, gradient tabs).

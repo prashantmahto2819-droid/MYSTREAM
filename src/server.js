@@ -94,7 +94,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
 
   const destView = (d) => ({
     id: d.id, name: d.name, platform: d.platform, rtmp_url: d.rtmp_url,
-    enabled: !!d.enabled, user_id: d.user_id, ...relay.statusFor(d.id),
+    enabled: !!d.enabled, user_id: d.user_id, group_name: d.group_name || '', ...relay.statusFor(d.id),
   });
 
   const ownedDestination = (user, id) => {
@@ -200,6 +200,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       patch.keyEnc = vault.encrypt(v.key);
     }
     if (b.platform !== undefined) patch.platform = cleanPlatform(b.platform);
+    if (b.group_name !== undefined) patch.groupName = String(b.group_name).trim().slice(0, 30);
     if (b.enabled !== undefined) patch.enabled = !!b.enabled;
     store.updateDestination(d.id, patch);
     if (patch.enabled !== undefined) {
@@ -269,6 +270,14 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       where = `/?oauth_error=${encodeURIComponent(e.message)}#destinations`;
     }
     res.writeHead(302, { location: where, 'cache-control': 'no-store' }); res.end();
+  });
+  route('GET', '/api/chat/youtube', async (req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    const q = new URL(req.url, 'http://x').searchParams;
+    const c = store.getConnection(Number(q.get('connection')));
+    if (!c || c.user_id !== ctx.user.id) throw new HttpError(404, 'Not found');
+    let out; try { out = await oauth.youtubeChat(c, String(q.get('page') || '').slice(0, 300)); } catch (e) { oauthError(e); }
+    send(res, 200, out);
   });
   route('DELETE', '/api/connections/:id', async (_req, res, ctx) => {
     needSession(ctx); needOAuth();

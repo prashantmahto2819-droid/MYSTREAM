@@ -2,11 +2,11 @@
 // the chunks over a WebSocket to the server, which turns them into RTMP (see src/studio.js).
 const $ = (id) => document.getElementById(id);
 const W = 1280; const H = 720;
-const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['standby', 'Standby']];
+const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['media', 'Media'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['standby', 'Standby']];
 const guests = new Map(); // id -> { name, pc, video }
 let hostWs = null;
 
-const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), t0: 0 };
+const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), gains: new Map(), t0: 0, timerEnd: 0 };
 const vid = (stream) => { const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {}); return v; };
 const say = (m) => { $('st-msg').textContent = m || ''; };
 const badge = (t, cls = '') => { const b = $('st-badge'); b.textContent = t; b.className = `badge ${cls}`; };
@@ -15,21 +15,54 @@ function ensureAudio() {
   if (!st.audioCtx) { st.audioCtx = new AudioContext(); st.dest = st.audioCtx.createMediaStreamDestination(); }
   return st.audioCtx;
 }
+function addNode(node, key) {
+  const ctx = ensureAudio();
+  st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect();
+  const gain = ctx.createGain(); gain.gain.value = st.gains.get(key)?.userVolume ?? 1; gain.userVolume = gain.gain.value; gain.muted = st.gains.get(key)?.muted || false;
+  if (gain.muted) gain.gain.value = 0;
+  node.connect(gain); gain.connect(st.dest);
+  st.mixed.set(key, node); st.gains.set(key, gain); renderMixer();
+}
 function addAudio(stream, key) {
   if (!stream.getAudioTracks().length) return;
-  const ctx = ensureAudio();
-  st.mixed.get(key)?.disconnect();
-  const src = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
-  src.connect(st.dest); st.mixed.set(key, src);
+  addNode(ensureAudio().createMediaStreamSource(new MediaStream(stream.getAudioTracks())), key);
+}
+function removeAudio(key) { st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect(); st.mixed.delete(key); st.gains.delete(key); renderMixer(); }
+function renderMixer() {
+  const box = $('st-mixer'); if (!box) return;
+  const label = (k) => (k === 'cam' ? 'Microphone' : k === 'screen' ? 'Screen sound' : k === 'media' ? 'Media sound' : (guests.get(Number(k.slice(1)))?.name || 'Guest'));
+  box.replaceChildren(...[...st.gains].map(([k, g]) => {
+    const row = document.createElement('div'); row.className = 'row';
+    const name = document.createElement('span'); name.className = 'grow'; name.textContent = label(k);
+    const range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '150'; range.value = String(Math.round(g.userVolume * 100));
+    range.addEventListener('input', () => { g.userVolume = Number(range.value) / 100; if (!g.muted) g.gain.value = g.userVolume; });
+    const mute = document.createElement('button'); mute.className = 'ghost'; mute.textContent = g.muted ? 'Unmute' : 'Mute';
+    mute.addEventListener('click', () => { g.muted = !g.muted; g.gain.value = g.muted ? 0 : g.userVolume; mute.textContent = g.muted ? 'Unmute' : 'Mute'; });
+    row.append(name, range, mute); return row;
+  }));
 }
 function stopStream(s) { s?.getTracks().forEach((t) => t.stop()); }
 
 async function useCamera() {
   try {
     stopStream(st.cam);
-    st.cam = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, frameRate: 30 }, audio: { echoCancellation: true, noiseSuppression: true } });
-    st.camVideo = vid(st.cam); addAudio(st.cam, 'cam'); say('Camera ready'); mark();
+    const camId = $('st-camdev').value; const micId = $('st-micdev').value;
+    st.cam = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, frameRate: 30, ...(camId ? { deviceId: { exact: camId } } : {}) },
+      audio: { echoCancellation: true, noiseSuppression: true, ...(micId ? { deviceId: { exact: micId } } : {}) } });
+    st.camVideo = vid(st.cam); addAudio(st.cam, 'cam'); say('Camera ready'); mark(); fillDevices();
   } catch (e) { say(`Camera/mic not available: ${e.message}`); }
+}
+async function fillDevices() {
+  try {
+    const list = await navigator.mediaDevices.enumerateDevices();
+    const fill = (sel, kind, label) => {
+      const cur = sel.value; sel.replaceChildren();
+      list.filter((d) => d.kind === kind).forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `${label} ${i + 1}`; sel.append(o); });
+      if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    };
+    fill($('st-camdev'), 'videoinput', 'Camera'); fill($('st-micdev'), 'audioinput', 'Microphone');
+  } catch { /* ignore */ }
 }
 async function useScreen() {
   try {
@@ -49,7 +82,7 @@ function setScene(id) {
   for (const b of $('st-scenes').children) b.classList.toggle('on', b.dataset.id === id);
 }
 
-const dims = (v) => [v.videoWidth || v.width || 0, v.videoHeight || v.height || 0];
+const dims = (v) => [v.videoWidth || v.naturalWidth || v.width || 0, v.videoHeight || v.naturalHeight || v.height || 0];
 function cover(ctx, v, x, y, w, h) {
   const [vw0, vh0] = dims(v); const vw = vw0 || w; const vh = vh0 || h;
   const s = Math.max(w / vw, h / vh); const dw = vw * s; const dh = vh * s;
@@ -62,14 +95,41 @@ function contain(ctx, v, w, h) {
   ctx.drawImage(v, (w - vw * s) / 2, (h - vh * s) / 2, vw * s, vh * s);
 }
 
+// ---- media scene (video / images / slides from your computer) ----
+const media = { items: [], i: 0, el: null };
+function showMedia() {
+  const f = media.items[media.i];
+  if (media.el?.pause) media.el.pause();
+  removeAudio('media'); media.el = null;
+  if (!f) { $('st-media-name').textContent = ''; return; }
+  const url = URL.createObjectURL(f);
+  if (f.type.startsWith('video/')) {
+    const v = document.createElement('video'); v.src = url; v.loop = true; v.playsInline = true; v.play().catch(() => {});
+    try { ensureAudio(); st.audioCtx.resume(); addNode(st.audioCtx.createMediaElementSource(v), 'media'); } catch { /* ignore */ }
+    media.el = v;
+  } else { const img = new Image(); img.src = url; media.el = img; }
+  $('st-media-name').textContent = `${media.i + 1}/${media.items.length}  ${f.name}`;
+  setScene('media');
+}
+const pen = { on: false, strokes: [], cur: null };
+let chatMsg = null;
+
 // ---- layout the user can drag on the preview ----
-const layout = { pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 } };
+const layout = { pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 } };
 let hits = []; let drag = null;
 const toCanvas = (e) => { const r = $('st-canvas').getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
 const hitAt = (x, y) => [...hits].reverse().find((h) => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+function drawCamera(ctx, v, x, y, w, h) {
+  const b = $('st-bright').value; const c = $('st-contrast').value; const sa = $('st-sat').value;
+  ctx.save();
+  if (b !== '100' || c !== '100' || sa !== '100') ctx.filter = `brightness(${b}%) contrast(${c}%) saturate(${sa}%)`;
+  if ($('st-mirror').checked) { ctx.translate(x + w / 2, 0); ctx.scale(-1, 1); ctx.translate(-(x + w / 2), 0); }
+  cover(ctx, keyed(v), x, y, w, h);
+  ctx.restore();
+}
 function drawPip(ctx, v) {
   const { x, y, w } = layout.pip; const h = Math.round(w * 9 / 16);
-  cover(ctx, keyed(v), x, y, w, h);
+  drawCamera(ctx, v, x, y, w, h);
   ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
   hits.push({ id: 'pip', x, y, w, h });
 }
@@ -147,7 +207,8 @@ function draw(now) {
   hits = [];
   drawBackground(ctx);
   const scene = st.scene;
-  if (scene === 'cam' && st.camVideo) cover(ctx, keyed(st.camVideo), 0, 0, W, H);
+  if (scene === 'cam' && st.camVideo) drawCamera(ctx, st.camVideo, 0, 0, W, H);
+  else if (scene === 'media' && media.el) contain(ctx, media.el, W, H);
   else if (scene === 'screen' && st.screenVideo) contain(ctx, st.screenVideo, W, H);
   else if (scene === 'pip' && st.screenVideo) {
     contain(ctx, st.screenVideo, W, H);
@@ -164,7 +225,7 @@ function draw(now) {
       const tw = W / cols; const th = H / rows;
       tiles.forEach((t, i) => {
         const x = (i % cols) * tw; const y = Math.floor(i / cols) * th;
-        cover(ctx, t.v, x + 2, y + 2, tw - 4, th - 4);
+        if (t.v === st.camVideo) drawCamera(ctx, t.v, x + 2, y + 2, tw - 4, th - 4); else cover(ctx, t.v, x + 2, y + 2, tw - 4, th - 4);
         if (t.n) { ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x + 12, y + th - 56, ctx.measureText(t.n).width + 24, 40); ctx.fillStyle = '#fff'; ctx.fillText(t.n, x + 24, y + th - 26); }
       });
     }
@@ -192,6 +253,26 @@ function draw(now) {
     ctx.fillStyle = '#ffcc00'; ctx.fillRect(x, y, 8, 64);
     ctx.fillStyle = '#fff'; ctx.fillText(lower, x + 24, y + 46, tw - 40);
     hits.push({ id: 'lower', x, y, w: tw, h: 64 });
+  }
+  const tm = $('st-timer').value;
+  if (tm !== 'none' && scene !== 'standby') {
+    let txt; let late = false;
+    if (tm === 'clock') txt = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    else if (!st.timerEnd) txt = '--:--';
+    else { const left = Math.max(0, Math.ceil((st.timerEnd - Date.now()) / 1000)); late = left === 0; txt = `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`; }
+    ctx.font = 'bold 54px sans-serif'; const w = ctx.measureText(txt).width + 40; const { x, y } = layout.timer;
+    ctx.fillStyle = late ? 'rgba(180,0,0,.85)' : 'rgba(0,0,0,.65)'; ctx.fillRect(x, y, w, 76);
+    ctx.fillStyle = '#fff'; ctx.fillText(txt, x + 20, y + 56); hits.push({ id: 'timer', x, y, w, h: 76 });
+  }
+  if (chatMsg && chatMsg.until > Date.now() && scene !== 'standby') {
+    const { x, y } = layout.chat; ctx.font = 'bold 30px sans-serif';
+    const line = `${chatMsg.author}: ${chatMsg.text}`; const w = Math.min(ctx.measureText(line).width + 48, W - 80);
+    ctx.fillStyle = 'rgba(255,255,255,.93)'; ctx.fillRect(x, y, w, 56);
+    ctx.fillStyle = '#111'; ctx.fillText(line, x + 24, y + 38, w - 40); hits.push({ id: 'chat', x, y, w, h: 56 });
+  }
+  for (const stroke of pen.strokes) {
+    ctx.strokeStyle = stroke.color; ctx.lineWidth = stroke.w; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
+    stroke.pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); if (stroke.pts.length === 1) ctx.lineTo(stroke.pts[0][0] + 0.1, stroke.pts[0][1]); ctx.stroke();
   }
   const tick = $('st-ticker').value.trim();
   if (tick && scene !== 'standby') {
@@ -229,10 +310,20 @@ function newGuest(id, name) {
   guests.set(id, g); renderGuests();
   return g;
 }
+// Optional: show guests the live output (low frame rate to spare the host's CPU).
+let progStream = null;
+async function sendProgram(g) {
+  const t = g.pc.getTransceivers().find((x) => x.receiver.track.kind === 'video');
+  if (!t) return;
+  if ($('st-return').checked) {
+    progStream = progStream || $('st-canvas').captureStream(15);
+    await t.sender.replaceTrack(progStream.getVideoTracks()[0]); t.direction = 'sendrecv';
+  } else { await t.sender.replaceTrack(null); }
+}
 function dropGuest(id) {
   const g = guests.get(id); if (!g) return;
   try { g.pc.close(); } catch { /* ignore */ }
-  st.mixed.get(`g${id}`)?.disconnect(); st.mixed.delete(`g${id}`);
+  removeAudio(`g${id}`);
   guests.delete(id); renderGuests();
 }
 async function onGuestSignal(id, signal) {
@@ -242,6 +333,7 @@ async function onGuestSignal(id, signal) {
     const mic = st.cam?.getAudioTracks()[0];
     const t = g.pc.getTransceivers().find((x) => x.receiver.track.kind === 'audio');
     if (t && mic) { await t.sender.replaceTrack(mic); t.direction = 'sendrecv'; } // guest hears the host
+    await sendProgram(g);
     const answer = await g.pc.createAnswer();
     await g.pc.setLocalDescription(answer);
     hostWs?.send(JSON.stringify({ to: id, signal: { sdp: g.pc.localDescription } }));
@@ -314,6 +406,15 @@ async function loadDests() {
   box.replaceChildren();
   const on = destinations.filter((d) => d.enabled);
   if (!on.length) box.textContent = 'No enabled destination yet. Add one below.';
+  const groups = [...new Set(on.map((d) => d.group_name).filter(Boolean))];
+  for (const g of groups) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'ghost'; b.textContent = `Group: ${g}`;
+    b.addEventListener('click', () => {
+      const inputs = [...box.querySelectorAll('input')].filter((i) => on.find((d) => String(d.id) === i.value)?.group_name === g);
+      const all = inputs.every((i) => i.checked); inputs.forEach((i) => { i.checked = !all; });
+    });
+    box.append(b);
+  }
   for (const d of on) {
     const l = document.createElement('label'); const i = document.createElement('input');
     i.type = 'checkbox'; i.value = d.id; i.checked = prev.size ? prev.has(String(d.id)) : true; i.dataset.dest = d.id;
@@ -365,6 +466,61 @@ function cleanup(reason) {
 }
 function stopLive() { try { st.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* ignore */ } setTimeout(() => cleanup('Stopped'), 500); }
 
+// ---- unified live chat (YouTube through your connected channel, Twitch read-only) ----
+const chat = { items: [], tw: null, ytId: null, ytRun: 0 };
+function addChat(src, author, text) {
+  chat.items.push({ src, author, text }); if (chat.items.length > 120) chat.items.shift();
+  const ul = $('chat-list'); const stick = ul.scrollTop + ul.clientHeight >= ul.scrollHeight - 30;
+  ul.replaceChildren(...chat.items.map((m) => {
+    const li = document.createElement('li'); const t = document.createElement('div'); t.className = 'grow';
+    t.textContent = `[${m.src}] ${m.author}: ${m.text}`;
+    const b = document.createElement('button'); b.className = 'ghost'; b.textContent = 'Show';
+    b.addEventListener('click', () => { chatMsg = { author: m.author, text: m.text, until: Date.now() + 15000 }; });
+    li.append(t, b); return li;
+  }));
+  if (stick) ul.scrollTop = ul.scrollHeight;
+}
+function connectTwitch() {
+  const ch = $('chat-twitch').value.trim().replace(/^#/, '').toLowerCase();
+  if (!/^[a-z0-9_]{3,25}$/.test(ch)) return say('Enter the Twitch channel name.');
+  try { chat.tw?.close(); } catch { /* ignore */ }
+  const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443'); chat.tw = ws;
+  ws.onopen = () => { ws.send('PASS SCHMOOPIIE'); ws.send(`NICK justinfan${Math.floor(Math.random() * 90000 + 10000)}`); ws.send(`JOIN #${ch}`); say(`Twitch chat: ${ch}`); };
+  ws.onmessage = (ev) => {
+    for (const line of String(ev.data).split('\r\n')) {
+      if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+      const m = /^(?:@\S+ )?:(\w+)!\w+@\w+\.tmi\.twitch\.tv PRIVMSG #\S+ :(.*)$/.exec(line);
+      if (m) addChat('Twitch', m[1], m[2]);
+    }
+  };
+  ws.onerror = () => say('Could not reach Twitch chat.');
+}
+async function pollYouTube(run, id) {
+  let page = '';
+  while (chat.ytRun === run) {
+    let wait = 6000;
+    try {
+      const res = await fetch(`/api/chat/youtube?connection=${id}&page=${encodeURIComponent(page)}`, { credentials: 'same-origin', headers: { 'x-requested-with': 'vivid' } });
+      const data = await res.json();
+      if (!res.ok) { say(data.error || 'YouTube chat error'); wait = 15000; } else { for (const m of data.messages) addChat('YouTube', m.author, m.text); page = data.next || page; wait = data.waitMs; }
+    } catch { wait = 15000; }
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+async function initChat() {
+  $('chat-twitch-go').addEventListener('click', connectTwitch);
+  $('chat-yt-go').addEventListener('click', () => {
+    const id = $('chat-yt').value; if (!id) return say('Connect your YouTube channel first (Destinations tab).');
+    chat.ytRun += 1; pollYouTube(chat.ytRun, id); say('YouTube chat started. It works while your YouTube live is running.');
+  });
+  try {
+    const r = await fetch('/api/connections', { credentials: 'same-origin' }); if (!r.ok) return;
+    const { connections } = await r.json();
+    const sel = $('chat-yt'); sel.replaceChildren();
+    for (const c of connections.filter((x) => x.provider === 'google')) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.account_name; sel.append(o); }
+  } catch { /* chat from YouTube is optional */ }
+}
+
 function init() {
   if (!$('st-canvas')) return;
   if (!navigator.mediaDevices?.getUserMedia) { $('studio-card').classList.add('hidden'); return; }
@@ -377,17 +533,20 @@ function init() {
   $('st-screen').addEventListener('click', useScreen);
   const cv = $('st-canvas');
   cv.addEventListener('pointerdown', (e) => {
-    const [x, y] = toCanvas(e); const h = hitAt(x, y); if (!h) return;
+    const [x, y] = toCanvas(e);
+    if (pen.on) { pen.cur = { color: $('st-pen').value, w: 5, pts: [[x, y]] }; pen.strokes.push(pen.cur); cv.setPointerCapture(e.pointerId); e.preventDefault(); return; }
+    const h = hitAt(x, y); if (!h) return;
     const o = layout[h.id]; drag = { id: h.id, dx: x - o.x, dy: y - o.y, w: h.w, h: h.h };
     cv.setPointerCapture(e.pointerId); e.preventDefault();
   });
   cv.addEventListener('pointermove', (e) => {
     const [x, y] = toCanvas(e);
+    if (pen.cur) { pen.cur.pts.push([x, y]); return; }
     if (!drag) { cv.style.cursor = hitAt(x, y) ? 'move' : 'default'; return; }
     const o = layout[drag.id];
     o.x = Math.max(0, Math.min(W - drag.w, x - drag.dx)); o.y = Math.max(0, Math.min(H - drag.h, y - drag.dy));
   });
-  for (const ev of ['pointerup', 'pointercancel']) cv.addEventListener(ev, () => { drag = null; });
+  for (const ev of ['pointerup', 'pointercancel']) cv.addEventListener(ev, () => { drag = null; pen.cur = null; });
   $('st-pip-size').addEventListener('input', (e) => { layout.pip.w = Number(e.target.value); layout.pip.x = Math.min(layout.pip.x, W - layout.pip.w); });
   $('st-logo-size').addEventListener('input', (e) => { layout.logo.h = Number(e.target.value); });
   $('st-bg').addEventListener('change', (e) => {
@@ -405,9 +564,31 @@ function init() {
     if (seg.mode === 'none') return;
     await ensureSeg(); if (seg.ready) pumpSeg();
   });
+  $('st-camdev').addEventListener('change', () => { if (st.cam) useCamera(); });
+  $('st-micdev').addEventListener('change', () => { if (st.cam) useCamera(); });
+  $('st-media-files').addEventListener('change', (e) => { media.items = [...e.target.files]; media.i = 0; showMedia(); });
+  $('st-media-next').addEventListener('click', () => { if (media.items.length) { media.i = (media.i + 1) % media.items.length; showMedia(); } });
+  $('st-media-prev').addEventListener('click', () => { if (media.items.length) { media.i = (media.i - 1 + media.items.length) % media.items.length; showMedia(); } });
+  $('st-media-play').addEventListener('click', () => { const v = media.el; if (v?.pause) { if (v.paused) v.play(); else v.pause(); } });
+  $('st-timer-start').addEventListener('click', () => { st.timerEnd = Date.now() + Math.max(1, Number($('st-timer-min').value) || 1) * 60000; $('st-timer').value = 'countdown'; });
+  $('st-draw').addEventListener('click', () => { pen.on = !pen.on; $('st-draw').classList.toggle('on', pen.on); $('st-canvas').style.cursor = pen.on ? 'crosshair' : 'default'; });
+  $('st-clear').addEventListener('click', () => { pen.strokes.length = 0; });
+  $('st-snap').addEventListener('click', () => {
+    $('st-canvas').toBlob((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `snapshot-${Date.now()}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || $('app').classList.contains('hidden')) return;
+    const n = Number(e.key);
+    if (n >= 1 && n <= SCENES.length) setScene(SCENES[n - 1][0]);
+    else if (e.key === 'ArrowRight') $('st-media-next').click();
+    else if (e.key === 'ArrowLeft') $('st-media-prev').click();
+    else if (e.key.toLowerCase() === 'd') $('st-draw').click();
+  });
+  initChat();
   $('st-rec').addEventListener('click', toggleRecord);
   $('st-start').addEventListener('click', goLive);
   $('st-invite').addEventListener('click', invite);
+  $('st-return').addEventListener('change', () => { for (const g of guests.values()) sendProgram(g).catch(() => {}); });
   $('st-stop').addEventListener('click', stopLive);
   $('st-logo').addEventListener('change', (e) => {
     const f = e.target.files[0]; if (!f) { st.logo = null; return; }
