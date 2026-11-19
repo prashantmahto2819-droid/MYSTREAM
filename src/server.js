@@ -257,13 +257,13 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
   });
   route('GET', '/api/oauth/:provider/start', async (_req, res, ctx) => {
     needSession(ctx); needOAuth();
-    if (!['google', 'facebook'].includes(ctx.params.provider)) throw new HttpError(404, 'Not found');
+    if (!['google', 'facebook', 'twitch'].includes(ctx.params.provider)) throw new HttpError(404, 'Not found');
     let url; try { url = oauth.authUrl(ctx.params.provider, ctx.user.id); } catch (e) { oauthError(e); }
     res.writeHead(302, { location: url, 'cache-control': 'no-store' }); res.end();
   });
   route('GET', '/api/oauth/:provider/callback', async (req, res, ctx) => {
     needSession(ctx); needOAuth();
-    if (!['google', 'facebook'].includes(ctx.params.provider)) throw new HttpError(404, 'Not found');
+    if (!['google', 'facebook', 'twitch'].includes(ctx.params.provider)) throw new HttpError(404, 'Not found');
     const q = new URL(req.url, 'http://x').searchParams;
     let where;
     try {
@@ -275,6 +275,17 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       where = `/?oauth_error=${encodeURIComponent(e.message)}#destinations`;
     }
     res.writeHead(302, { location: where, 'cache-control': 'no-store' }); res.end();
+  });
+  route('GET', '/api/oauth-setup', async (_req, res, ctx) => {
+    needSession(ctx); needOAuth(); needAdmin(ctx.user);
+    send(res, 200, oauth.setupStatus());
+  });
+  route('PUT', '/api/oauth-setup', async (req, res, ctx) => {
+    needSession(ctx); needOAuth(); needAdmin(ctx.user);
+    const b = await readJson(req);
+    try { oauth.saveSetup(b); } catch (e) { oauthError(e); }
+    store.addActivity(ctx.user.id, 'channel_setup_saved');
+    send(res, 200, oauth.setupStatus());
   });
   route('GET', '/api/chat/youtube', async (req, res, ctx) => {
     needSession(ctx); needOAuth();

@@ -3,6 +3,7 @@ import { randomToken } from './crypto.js';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/youtube';
 const FB_VERSION = 'v19.0';
 const FB_SCOPE = 'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video';
+const TWITCH_SCOPE = 'channel:read:stream_key channel:manage:broadcast';
 
 export class OAuthError extends Error {}
 
@@ -13,12 +14,19 @@ export class OAuthError extends Error {}
  */
 export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now }) {
   const states = new Map(); // state -> { userId, provider, exp }
-  const redirect = (provider) => `${cfg.publicBaseUrl}/api/oauth/${provider}/callback`;
+  const KEYS = ['googleClientId', 'googleClientSecret', 'facebookAppId', 'facebookAppSecret', 'twitchClientId', 'twitchClientSecret', 'publicBaseUrl'];
+  // values saved from the dashboard (encrypted) win over the .env file
+  const cv = (k) => {
+    try { const raw = store.getSetting?.(`oauth_${k}`); if (raw) return vault.decrypt(raw); } catch { /* fall back to env */ }
+    return cfg[k] || '';
+  };
+  const redirect = (provider) => `${cv('publicBaseUrl')}/api/oauth/${provider}/callback`;
 
   const configured = () => ({
-    google: !!(cfg.googleClientId && cfg.googleClientSecret && cfg.publicBaseUrl),
-    facebook: !!(cfg.facebookAppId && cfg.facebookAppSecret && cfg.publicBaseUrl),
-    redirects: { google: redirect('google'), facebook: redirect('facebook') },
+    google: !!(cv('googleClientId') && cv('googleClientSecret') && cv('publicBaseUrl')),
+    facebook: !!(cv('facebookAppId') && cv('facebookAppSecret') && cv('publicBaseUrl')),
+    twitch: !!(cv('twitchClientId') && cv('twitchClientSecret') && cv('publicBaseUrl')),
+    redirects: { google: redirect('google'), facebook: redirect('facebook'), twitch: redirect('twitch') },
   });
 
   const call = async (url, opts = {}, what = 'request') => {
@@ -41,11 +49,14 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     states.set(state, { userId, provider, exp: now() + 10 * 60000 });
     if (provider === 'google') {
       return 'https://accounts.google.com/o/oauth2/v2/auth?' + form({
-        client_id: cfg.googleClientId, redirect_uri: redirect('google'), response_type: 'code', scope: GOOGLE_SCOPE,
+        client_id: cv('googleClientId'), redirect_uri: redirect('google'), response_type: 'code', scope: GOOGLE_SCOPE,
         access_type: 'offline', prompt: 'consent', state,
       });
     }
-    return `https://www.facebook.com/${FB_VERSION}/dialog/oauth?` + form({ client_id: cfg.facebookAppId, redirect_uri: redirect('facebook'), scope: FB_SCOPE, state, response_type: 'code' });
+    if (provider === 'twitch') {
+      return 'https://id.twitch.tv/oauth2/authorize?' + form({ client_id: cv('twitchClientId'), redirect_uri: redirect('twitch'), response_type: 'code', scope: TWITCH_SCOPE, state, force_verify: 'true' });
+    }
+    return `https://www.facebook.com/${FB_VERSION}/dialog/oauth?` + form({ client_id: cv('facebookAppId'), redirect_uri: redirect('facebook'), scope: FB_SCOPE, state, response_type: 'code' });
   }
 
   const save = (userId, provider, remoteId, accountName, token) => store.upsertConnection({ userId, provider, remoteId, accountName, tokenEnc: vault.encrypt(JSON.stringify(token)) });
@@ -59,7 +70,7 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
 
     if (provider === 'google') {
       const tok = await call('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: form({ code, client_id: cfg.googleClientId, client_secret: cfg.googleClientSecret, redirect_uri: redirect('google'), grant_type: 'authorization_code' }) }, 'Google sign-in');
+        body: form({ code, client_id: cv('googleClientId'), client_secret: cv('googleClientSecret'), redirect_uri: redirect('google'), grant_type: 'authorization_code' }) }, 'Google sign-in');
       if (!tok.refresh_token) throw new OAuthError('Google did not give permanent access. Remove the app at myaccount.google.com/permissions and connect again.');
       const ch = await call('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers: { authorization: `Bearer ${tok.access_token}` } }, 'Reading your channel');
       const item = ch.items?.[0];
@@ -67,8 +78,16 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
       return [save(userId, 'google', item.id, item.snippet?.title || 'YouTube channel', { refresh: tok.refresh_token, access: tok.access_token, exp: now() + (tok.expires_in || 3600) * 1000 })];
     }
 
-    const short = await call(`https://graph.facebook.com/${FB_VERSION}/oauth/access_token?` + form({ client_id: cfg.facebookAppId, client_secret: cfg.facebookAppSecret, redirect_uri: redirect('facebook'), code }), {}, 'Facebook sign-in');
-    const long = await call(`https://graph.facebook.com/${FB_VERSION}/oauth/access_token?` + form({ grant_type: 'fb_exchange_token', client_id: cfg.facebookAppId, client_secret: cfg.facebookAppSecret, fb_exchange_token: short.access_token }), {}, 'Facebook token');
+    if (provider === 'twitch') {
+      const tok = await call('https://id.twitch.tv/oauth2/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form({ client_id: cv('twitchClientId'), client_secret: cv('twitchClientSecret'), code, grant_type: 'authorization_code', redirect_uri: redirect('twitch') }) }, 'Twitch sign-in');
+      const me = await call('https://api.twitch.tv/helix/users', { headers: { authorization: `Bearer ${tok.access_token}`, 'client-id': cv('twitchClientId') } }, 'Reading your Twitch channel');
+      const u = me.data?.[0]; if (!u) throw new OAuthError('Could not read your Twitch channel.');
+      return [save(userId, 'twitch', u.id, u.display_name || u.login, { refresh: tok.refresh_token, access: tok.access_token, exp: now() + (tok.expires_in || 3600) * 1000, login: u.login })];
+    }
+
+    const short = await call(`https://graph.facebook.com/${FB_VERSION}/oauth/access_token?` + form({ client_id: cv('facebookAppId'), client_secret: cv('facebookAppSecret'), redirect_uri: redirect('facebook'), code }), {}, 'Facebook sign-in');
+    const long = await call(`https://graph.facebook.com/${FB_VERSION}/oauth/access_token?` + form({ grant_type: 'fb_exchange_token', client_id: cv('facebookAppId'), client_secret: cv('facebookAppSecret'), fb_exchange_token: short.access_token }), {}, 'Facebook token');
     const pages = await call(`https://graph.facebook.com/${FB_VERSION}/me/accounts?` + form({ access_token: long.access_token, limit: '100' }), {}, 'Reading your pages');
     if (!pages.data?.length) throw new OAuthError('No Facebook Page found. Only Pages you manage can go live from here.');
     return pages.data.map((p) => save(userId, 'facebook', p.id, p.name, { page: p.access_token }));
@@ -79,7 +98,7 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     const t = readToken(conn);
     if (t.exp > now() + 60000) return t.access;
     const r = await call('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: form({ client_id: cfg.googleClientId, client_secret: cfg.googleClientSecret, refresh_token: t.refresh, grant_type: 'refresh_token' }) }, 'Refreshing Google access');
+      body: form({ client_id: cv('googleClientId'), client_secret: cv('googleClientSecret'), refresh_token: t.refresh, grant_type: 'refresh_token' }) }, 'Refreshing Google access');
     store.updateConnectionToken(conn.id, vault.encrypt(JSON.stringify({ ...t, access: r.access_token, exp: now() + (r.expires_in || 3600) * 1000 })));
     return r.access_token;
   }
@@ -111,6 +130,23 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     return { rtmpUrl: full.slice(0, i + 6), streamKey: full.slice(i + 6), platform: 'facebook', watchUrl: `https://www.facebook.com/${v.id}`, name: `Facebook: ${title}` };
   }
 
+  async function twitchAccess(conn) {
+    const t = readToken(conn);
+    if (t.exp > now() + 60000) return t.access;
+    const r = await call('https://id.twitch.tv/oauth2/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ client_id: cv('twitchClientId'), client_secret: cv('twitchClientSecret'), grant_type: 'refresh_token', refresh_token: t.refresh }) }, 'Refreshing Twitch access');
+    store.updateConnectionToken(conn.id, vault.encrypt(JSON.stringify({ ...t, access: r.access_token, refresh: r.refresh_token || t.refresh, exp: now() + (r.expires_in || 3600) * 1000 })));
+    return r.access_token;
+  }
+  async function createTwitch(conn, { title }) {
+    const access = await twitchAccess(conn); const t = readToken(conn);
+    const h = { authorization: `Bearer ${access}`, 'client-id': cv('twitchClientId') };
+    const k = await call(`https://api.twitch.tv/helix/streams/key?broadcaster_id=${encodeURIComponent(conn.remote_id)}`, { headers: h }, 'Reading your Twitch stream key');
+    const key = k.data?.[0]?.stream_key; if (!key) throw new OAuthError('Twitch did not return a stream key.');
+    try { await call(`https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(conn.remote_id)}`, { method: 'PATCH', headers: { ...h, 'content-type': 'application/json' }, body: JSON.stringify({ title }) }, 'Setting the Twitch title'); } catch { /* the title is optional */ }
+    return { rtmpUrl: 'rtmp://live.twitch.tv/app', streamKey: key, platform: 'twitch', watchUrl: `https://www.twitch.tv/${t.login || ''}`, name: `Twitch: ${title}` };
+  }
+
   // ---- YouTube live chat (read) ----
   const chatIds = new Map(); // connection id -> { id, exp }
   async function youtubeChat(conn, pageToken = '') {
@@ -134,6 +170,20 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     };
   }
 
-  const create = (conn, opts) => (conn.provider === 'google' ? createYouTube(conn, opts) : createFacebook(conn, opts));
-  return { configured, authUrl, handleCallback, create, youtubeChat, states };
+  const create = (conn, opts) => (conn.provider === 'google' ? createYouTube(conn, opts) : conn.provider === 'twitch' ? createTwitch(conn, opts) : createFacebook(conn, opts));
+
+  /** What the admin has set up (never the secrets themselves). */
+  function setupStatus() {
+    return { publicBaseUrl: cv('publicBaseUrl'), set: Object.fromEntries(KEYS.filter((k) => k !== 'publicBaseUrl').map((k) => [k, !!cv(k)])), redirects: configured().redirects, configured: (({ redirects, ...rest }) => rest)(configured()) };
+  }
+  function saveSetup(values = {}) {
+    for (const k of KEYS) {
+      if (values[k] === undefined) continue;
+      let v = String(values[k]).trim().slice(0, 400); if (!v) continue;
+      if (k === 'publicBaseUrl') { v = v.replace(/\/+$/, ''); if (!/^https?:\/\/[^\s/]+$/.test(v)) throw new OAuthError('The site address must look like https://live.example.com'); }
+      store.setSetting(`oauth_${k}`, vault.encrypt(v));
+    }
+    for (const k of values.clear || []) if (KEYS.includes(k)) store.deleteSetting(`oauth_${k}`);
+  }
+  return { configured, authUrl, handleCallback, create, youtubeChat, setupStatus, saveSetup, states };
 }

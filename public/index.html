@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vivid Stream</title>
-  <link rel="stylesheet" href="/style.css?v=12">
+  <link rel="stylesheet" href="/style.css?v=13">
 </head>
 <body>
   <main id="login" class="card narrow hidden">
@@ -218,11 +218,10 @@
       </section>
 
       <section class="card" data-tab="destinations" id="connect-card">
-        <h2>Connect YouTube / Facebook</h2>
-        <p class="muted">Sign in once. Then create a live with one click: the stream key is made and added automatically.</p>
+        <h2>Channels</h2>
+        <p class="muted">Connect YouTube, Facebook Pages or Twitch once and create a live with one click: the stream key is made and added for you. Any other platform works with its RTMP address.</p>
         <p id="connect-msg" class="sub"></p>
-        <div class="row"><a id="connect-google" class="btnlink hidden" href="/api/oauth/google/start">Connect YouTube</a><a id="connect-facebook" class="btnlink hidden" href="/api/oauth/facebook/start">Connect Facebook Page</a></div>
-        <p id="connect-off" class="sub hidden">Not set up on the server yet. See "Connect YouTube / Facebook" in the README.</p>
+        <button data-open="dlg-channel">+ Add channel</button>
         <ul id="conn-list" class="list"></ul>
         <form id="golive-form" class="stack hidden">
           <h3 id="golive-for"></h3>
@@ -382,10 +381,44 @@
           <p id="pw-note" class="sub"></p>
         </form>
 </div></dialog>
+  <dialog class="modal" id="dlg-channel"><div class="modal-head"><h2>Add channel</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<h3>Connect your account (one click)</h3>
+<div class="tiles">
+  <button class="tile" data-connect="google"><strong>YouTube</strong><span class="sub">Channel</span></button>
+  <button class="tile" data-connect="facebook"><strong>Facebook</strong><span class="sub">Pages you manage</span></button>
+  <button class="tile" data-connect="twitch"><strong>Twitch</strong><span class="sub">Channel</span></button>
+</div>
+<h3>Add with RTMP address and stream key</h3>
+<div class="tiles">
+  <button class="tile" data-rtmp="youtube"><strong>YouTube</strong><span class="sub">Stream key</span></button>
+  <button class="tile" data-rtmp="facebook"><strong>Facebook</strong><span class="sub">Stream key</span></button>
+  <button class="tile" data-rtmp="twitch"><strong>Twitch</strong><span class="sub">Stream key</span></button>
+  <button class="tile" data-rtmp="instagram"><strong>Instagram</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="linkedin"><strong>LinkedIn</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="x"><strong>X</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="tiktok"><strong>TikTok</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="kick"><strong>Kick</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="rumble"><strong>Rumble</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="amazon"><strong>Amazon Live</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="telegram"><strong>Telegram</strong><span class="sub">RTMP</span></button>
+  <button class="tile" data-rtmp="custom"><strong>Custom RTMP</strong><span class="sub">Any server</span></button>
+</div>
+</div><div class="modal-foot"><button data-close>Close</button></div></dialog>
+  <dialog class="modal" id="dlg-oauth"><div class="modal-head"><h2>Connect</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<div id="oauth-steps"></div>
+<div id="oauth-redirect-box" class="hidden">
+  <label>Redirect address (paste this where the steps say so)
+    <div class="copy-row"><input id="oauth-redirect" readonly><button data-copy="oauth-redirect" class="ghost">Copy</button></div></label>
+</div>
+<label>Site address of this dashboard <input id="oauth-base" placeholder="https://live.example.com"></label>
+<label><span id="oauth-id-label">Client ID</span> <input id="oauth-id" autocomplete="off"></label>
+<label><span id="oauth-secret-label">Client secret</span> <input id="oauth-secret" type="password" autocomplete="off"></label>
+<p id="oauth-note" class="sub"></p>
+</div><div class="modal-foot"><button class="ghost" data-close>Close</button><button id="oauth-save">Save</button><button id="oauth-go" class="hidden">Connect now</button></div></dialog>
   <div id="toasts" popover="manual"></div>
   </div>
-  <script src="/app.js?v=12" type="module"></script>
-  <script src="/studio.js?v=12" type="module"></script>
-  <script src="/nav.js?v=12" type="module"></script>
+  <script src="/app.js?v=13" type="module"></script>
+  <script src="/studio.js?v=13" type="module"></script>
+  <script src="/nav.js?v=13" type="module"></script>
 </body>
 </html>

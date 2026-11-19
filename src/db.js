@@ -106,13 +106,30 @@ export function openDb(dir) {
   db.exec(`CREATE TABLE IF NOT EXISTS connections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL CHECK (provider IN ('google','facebook')),
+    provider TEXT NOT NULL CHECK (provider IN ('google','facebook','twitch')),
     remote_id TEXT NOT NULL,
     account_name TEXT NOT NULL,
     token_enc TEXT NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
     UNIQUE (user_id, provider, remote_id)
   )`);
+  const connSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'connections'").get()?.sql || '';
+  if (connSql && !connSql.includes("'twitch'")) {
+    db.exec('ALTER TABLE connections RENAME TO connections_old');
+    db.exec(`CREATE TABLE connections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN ('google','facebook','twitch')),
+      remote_id TEXT NOT NULL,
+      account_name TEXT NOT NULL,
+      token_enc TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+      UNIQUE (user_id, provider, remote_id)
+    )`);
+    db.exec('INSERT INTO connections SELECT id,user_id,provider,remote_id,account_name,token_enc,created_at FROM connections_old');
+    db.exec('DROP TABLE connections_old');
+  }
+  db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   return makeStore(db);
 }
 
@@ -296,6 +313,10 @@ function makeStore(db) {
     deleteRecording: (id) => q('DELETE FROM recordings WHERE id = ?').run(id),
     listOpenRecordings: () => q("SELECT * FROM recordings WHERE status = 'recording'").all(),
     listOldRecordings: (olderThanMs) => q("SELECT * FROM recordings WHERE status = 'done' AND ended_at < ?").all(olderThanMs),
+
+    getSetting: (key) => q('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null,
+    setSetting: (key, value) => q('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value),
+    deleteSetting: (key) => q('DELETE FROM settings WHERE key = ?').run(key),
 
     // ---- activity log ----
     addActivity(userId, action, detail = '') {

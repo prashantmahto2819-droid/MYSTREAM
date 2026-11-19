@@ -37,6 +37,8 @@ export function loadConfig(e = process.env) {
     googleClientSecret: e.GOOGLE_CLIENT_SECRET || '',
     facebookAppId: e.FACEBOOK_APP_ID || '',
     facebookAppSecret: e.FACEBOOK_APP_SECRET || '',
+    twitchClientId: e.TWITCH_CLIENT_ID || '',
+    twitchClientSecret: e.TWITCH_CLIENT_SECRET || '',
 
     // recording of lives
     recordingKeepDays: Number(e.RECORDING_KEEP_DAYS || 7),

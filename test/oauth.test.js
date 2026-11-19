@@ -6,7 +6,7 @@ import { makeOAuth } from '../src/oauth.js';
 import { createApp } from '../src/server.js';
 import { RelayManager } from '../src/relay.js';
 
-const cfgBase = { publicBaseUrl: 'https://live.example.com', googleClientId: 'gid', googleClientSecret: 'gsec', facebookAppId: 'fid', facebookAppSecret: 'fsec',
+const cfgBase = { publicBaseUrl: 'https://live.example.com', googleClientId: 'gid', googleClientSecret: 'gsec', twitchClientId: 'tid', twitchClientSecret: 'tsec', facebookAppId: 'fid', facebookAppSecret: 'fsec',
   mediamtxApi: 'http://m', mediamtxRtmp: 'rtmp://m', publicRtmpUrl: 'rtmp://r', ffmpegBin: 'ffmpeg', pollMs: 1000, backoffBaseMs: 20, backoffMaxMs: 80, stableMs: 30, maxDestinationsPerUser: 5, dataDir: '/tmp' };
 const J = (o, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(o) });
 
@@ -28,6 +28,13 @@ function fakeNet(log) {
     if (u.includes('graph.facebook.com') && u.includes('oauth/access_token')) return J({ access_token: u.includes('fb_exchange_token') ? 'LONG' : 'SHORT' });
     if (u.includes('/me/accounts')) return J({ data: [{ id: 'P1', name: 'Page One', access_token: 'PT1' }, { id: 'P2', name: 'Page Two', access_token: 'PT2' }] });
     if (u.includes('/live_videos')) return J({ id: 'LV9', secure_stream_url: 'rtmps://live-api-s.facebook.com:443/rtmp/FB-KEY-77?s_bl=1' });
+    if (u.startsWith('https://id.twitch.tv/oauth2/token')) {
+      const b = new URLSearchParams(opts.body);
+      return b.get('grant_type') === 'refresh_token' ? J({ access_token: 'TA2', refresh_token: 'TR2', expires_in: 3600 }) : J({ access_token: 'TA1', refresh_token: 'TR1', expires_in: 3600 });
+    }
+    if (u.startsWith('https://api.twitch.tv/helix/users')) return J({ data: [{ id: 'T77', login: 'prashant', display_name: 'Prashant' }] });
+    if (u.startsWith('https://api.twitch.tv/helix/streams/key')) return J({ data: [{ stream_key: 'live_77_abc' }] });
+    if (u.startsWith('https://api.twitch.tv/helix/channels')) return J({}, 204);
     return J({ error: { message: 'unexpected ' + u } }, 404);
   };
 }
@@ -166,4 +173,46 @@ test('youtube chat: finds the live chat, returns clean messages, paging token an
   await t2.oauth.handleCallback('google', { code: 'c', state: s2 }, t2.uid);
   await assert.rejects(() => t2.oauth.youtubeChat(t2.store.getConnection(t2.store.listConnections(t2.uid)[0].id)), /No live broadcast/);
   globalThis.__noLive = false;
+});
+
+test('oauth twitch: connect, then create live returns the stream key and sets the title', async () => {
+  const t = setup();
+  const u = new URL(t.oauth.authUrl('twitch', t.uid));
+  assert.equal(u.origin + u.pathname, 'https://id.twitch.tv/oauth2/authorize');
+  assert.match(u.searchParams.get('scope'), /channel:read:stream_key/);
+  await t.oauth.handleCallback('twitch', { code: 'c', state: u.searchParams.get('state') }, t.uid);
+  const [c] = t.store.listConnections(t.uid);
+  assert.equal(c.provider, 'twitch'); assert.equal(c.account_name, 'Prashant');
+  assert.ok(!JSON.stringify(t.store.getConnection(c.id)).includes('TR1'), 'refresh token is encrypted');
+  const made = await t.oauth.create(t.store.getConnection(c.id), { title: 'Aaj ki live' });
+  assert.equal(made.rtmpUrl, 'rtmp://live.twitch.tv/app'); assert.equal(made.streamKey, 'live_77_abc'); assert.equal(made.platform, 'twitch');
+  assert.equal(made.watchUrl, 'https://www.twitch.tv/prashant');
+  assert.ok(t.log.some(([m, url]) => m === 'PATCH' && url.includes('/helix/channels')), 'title was set');
+  t.advance(2 * 3600 * 1000);
+  await t.oauth.create(t.store.getConnection(c.id), { title: 'again' });
+  assert.ok(t.log.some(([, url, body]) => url.includes('id.twitch.tv/oauth2/token') && String(body).includes('refresh_token')), 'expired token refreshed');
+});
+
+test('oauth setup from the dashboard: saved encrypted, beats .env, secrets never returned, bad address refused', () => {
+  const t = setup({ googleClientId: '', googleClientSecret: '', publicBaseUrl: '' });
+  assert.equal(t.oauth.configured().google, false);
+  t.oauth.saveSetup({ publicBaseUrl: 'https://live.example.com/', googleClientId: 'GID-1', googleClientSecret: 'SECRET-1' });
+  assert.equal(t.oauth.configured().google, true);
+  const st = t.oauth.setupStatus();
+  assert.equal(st.publicBaseUrl, 'https://live.example.com');
+  assert.equal(st.set.googleClientId, true);
+  assert.ok(!JSON.stringify(st).includes('SECRET-1') && !JSON.stringify(st).includes('GID-1'));
+  assert.ok(!t.store.getSetting('oauth_googleClientSecret').includes('SECRET-1'), 'stored encrypted');
+  assert.equal(st.redirects.twitch, 'https://live.example.com/api/oauth/twitch/callback');
+  assert.throws(() => t.oauth.saveSetup({ publicBaseUrl: 'javascript:alert(1)' }), /site address/);
+  t.oauth.saveSetup({ clear: ['googleClientSecret'] });
+  assert.equal(t.oauth.configured().google, false);
+});
+
+test('connections table accepts twitch and old databases are migrated', () => {
+  const store = openDb(':memory:');
+  const uid = store.createUser({ email: 'z@x.com', name: 'Z', passwordHash: 'h' });
+  assert.ok(store.upsertConnection({ userId: uid, provider: 'twitch', remoteId: '1', accountName: 'T', tokenEnc: 'x' }) > 0);
+  assert.equal(store.getSetting('nope'), null);
+  store.setSetting('k', 'v'); store.setSetting('k', 'v2'); assert.equal(store.getSetting('k'), 'v2');
 });

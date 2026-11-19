@@ -460,17 +460,19 @@ document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('clic
   try { me = (await api('GET', '/api/me')).user; await showApp(); } catch { showLogin(); }
 })();
 
-// ---------- connected accounts (YouTube / Facebook) ----------
+// ---------- connected accounts (YouTube / Facebook / Twitch) ----------
 let goLiveFor = null;
+let oauthCfg = { google: false, facebook: false, twitch: false };
+const PROVIDER_LABEL = { google: 'YouTube', facebook: 'Facebook Page', twitch: 'Twitch' };
 async function loadConnections() {
   const { configured, connections } = await api('GET', '/api/connections');
-  $('connect-google').classList.toggle('hidden', !configured.google);
-  $('connect-facebook').classList.toggle('hidden', !configured.facebook);
-  $('connect-off').classList.toggle('hidden', configured.google || configured.facebook);
-  const label = { google: 'YouTube', facebook: 'Facebook Page' };
+  oauthCfg = configured;
   $('conn-list').replaceChildren(...connections.map((c) => el('li', {},
-    el('div', { class: 'grow' }, c.account_name, el('div', { class: 'sub' }, label[c.provider])),
-    el('button', { onclick: () => { goLiveFor = c; $('golive-for').textContent = `New live on ${c.account_name}`; $('golive-note').textContent = ''; $('golive-form').classList.remove('hidden'); } }, 'Create live'),
+    el('div', { class: 'grow' }, c.account_name, el('div', { class: 'sub' }, PROVIDER_LABEL[c.provider] || c.provider)),
+    el('button', { onclick: () => {
+      goLiveFor = c; $('golive-for').textContent = `New live on ${c.account_name}`; $('golive-note').textContent = '';
+      $('golive-form').elements.privacy.closest('label').classList.toggle('hidden', c.provider !== 'google'); $('golive-form').classList.remove('hidden');
+    } }, 'Create live'),
     el('button', { class: 'danger', onclick: async () => {
       if (!confirm(`Disconnect ${c.account_name}?`)) return;
       try { await api('DELETE', `/api/connections/${c.id}`); await loadConnections(); } catch (err) { alert(err.message); }
@@ -479,6 +481,74 @@ async function loadConnections() {
   if (q.get('connected')) $('connect-msg').textContent = `Connected (${q.get('connected')}).`;
   if (q.get('oauth_error')) $('connect-msg').textContent = q.get('oauth_error');
 }
+
+const GUIDES = {
+  google: { name: 'YouTube', id: 'googleClientId', secret: 'googleClientSecret', idLabel: 'Client ID', secretLabel: 'Client secret', steps: [
+    ['Open Google Cloud and create a project (any name).', 'https://console.cloud.google.com/projectcreate'],
+    ['Turn on "YouTube Data API v3" for that project.', 'https://console.cloud.google.com/apis/library/youtube.googleapis.com'],
+    ['OAuth consent screen: choose External, add your own email as a test user, then press "Publish app" (otherwise the connection stops after 7 days).', 'https://console.cloud.google.com/apis/credentials/consent'],
+    ['Credentials > Create credentials > OAuth client ID > Web application. Under "Authorised redirect URIs" add the redirect address shown below.', 'https://console.cloud.google.com/apis/credentials'],
+    ['Copy the Client ID and Client secret into the boxes below and press Save.'],
+    ['Your YouTube channel must be allowed to live stream (verify your phone number; the first time it can take up to 24 hours).', 'https://www.youtube.com/features'],
+  ] },
+  facebook: { name: 'Facebook', id: 'facebookAppId', secret: 'facebookAppSecret', idLabel: 'App ID', secretLabel: 'App secret', steps: [
+    ['Create an app on Meta for Developers (type: Business or Other).', 'https://developers.facebook.com/apps/creation/'],
+    ['Add the product "Facebook Login" and put the redirect address shown below in "Valid OAuth Redirect URIs".', 'https://developers.facebook.com/apps/'],
+    ['App settings > Basic: copy the App ID and App secret into the boxes below and press Save.', 'https://developers.facebook.com/apps/'],
+    ['Keep the app in Development mode and add yourself as admin. Pages you manage work without review; other people\'s Pages need Meta app review.', 'https://developers.facebook.com/docs/app-review'],
+  ] },
+  twitch: { name: 'Twitch', id: 'twitchClientId', secret: 'twitchClientSecret', idLabel: 'Client ID', secretLabel: 'Client secret', steps: [
+    ['Turn on two-factor login for your Twitch account (needed to register an app).', 'https://www.twitch.tv/settings/security'],
+    ['Register an application. Name: anything. OAuth Redirect URL: the redirect address shown below. Category: Broadcaster Suite. Client type: Confidential.', 'https://dev.twitch.tv/console/apps/create'],
+    ['Open Manage on your app, copy the Client ID, press "New Secret" and copy the secret. Paste both below and press Save.', 'https://dev.twitch.tv/console/apps'],
+  ] },
+};
+let setupFor = null;
+async function openOAuthSetup(p) {
+  setupFor = p; const g = GUIDES[p];
+  $('dlg-channel').close();
+  $('dlg-oauth').querySelector('h2').textContent = `Connect ${g.name}`;
+  $('oauth-id-label').textContent = g.idLabel; $('oauth-secret-label').textContent = g.secretLabel;
+  $('oauth-steps').replaceChildren(el('p', { class: 'muted' }, 'One-time setup (about 5 minutes). Do the steps in order:'),
+    el('ol', {}, ...g.steps.map(([t, url]) => el('li', {}, t, url ? [' ', el('a', { href: url, target: '_blank', rel: 'noopener' }, 'Open')] : []))));
+  $('oauth-base').value = location.origin; $('oauth-id').value = ''; $('oauth-secret').value = ''; $('oauth-note').textContent = '';
+  $('oauth-go').classList.add('hidden');
+  try {
+    const st = await api('GET', '/api/oauth-setup');
+    $('oauth-redirect').value = st.redirects[p].startsWith('http') ? st.redirects[p] : `${location.origin}/api/oauth/${p}/callback`;
+    $('oauth-redirect-box').classList.remove('hidden');
+    if (st.publicBaseUrl) $('oauth-base').value = st.publicBaseUrl;
+    if (st.set[g.id] || st.set[g.secret]) $('oauth-note').textContent = 'Already saved. Leave the boxes empty to keep the saved values.';
+  } catch (err) { $('oauth-note').textContent = err.message; }
+  $('oauth-redirect').value = `${$('oauth-base').value.replace(/\/+$/, '')}/api/oauth/${p}/callback`;
+  $('dlg-oauth').showModal();
+}
+$('oauth-base').addEventListener('input', () => { if (setupFor) $('oauth-redirect').value = `${$('oauth-base').value.trim().replace(/\/+$/, '')}/api/oauth/${setupFor}/callback`; });
+$('oauth-save').addEventListener('click', async () => {
+  const g = GUIDES[setupFor]; const body = { publicBaseUrl: $('oauth-base').value };
+  if ($('oauth-id').value.trim()) body[g.id] = $('oauth-id').value.trim();
+  if ($('oauth-secret').value.trim()) body[g.secret] = $('oauth-secret').value.trim();
+  try {
+    const st = await api('PUT', '/api/oauth-setup', body);
+    oauthCfg = st.configured; $('oauth-id').value = ''; $('oauth-secret').value = '';
+    if (st.configured[setupFor]) { $('oauth-note').textContent = 'Saved. Now press "Connect now" and sign in.'; $('oauth-go').classList.remove('hidden'); }
+    else $('oauth-note').textContent = 'Saved, but the Client ID and secret are still missing.';
+  } catch (err) { $('oauth-note').textContent = err.message; }
+});
+$('oauth-go').addEventListener('click', () => { location.href = `/api/oauth/${setupFor}/start`; });
+
+$('dlg-channel').addEventListener('click', async (e) => {
+  const c = e.target.closest('[data-connect]'); const r = e.target.closest('[data-rtmp]');
+  if (r) { $('dlg-channel').close(); $('platform').value = r.dataset.rtmp; applyPreset(); $('dlg-dest').showModal(); return; }
+  if (!c) return;
+  const p = c.dataset.connect;
+  try { await loadConnections(); } catch { /* keep the last known state */ }
+  if (oauthCfg[p]) { location.href = `/api/oauth/${p}/start`; return; }
+  if (me && me.role !== 'admin') { toastMsg('Ask the admin to set up this connection first (Destinations > Add channel).'); return; }
+  openOAuthSetup(p);
+});
+const toastMsg = (m) => { $('connect-msg').textContent = m; };
+
 $('golive-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!goLiveFor) return;

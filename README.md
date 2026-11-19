@@ -208,3 +208,8 @@ If the app restarts with "unable to open database file", the data folder belongs
 - Vertical templates (Shorts speaker, two people) that also switch the output to Portrait; the chosen quality is remembered.
 - Activity tab shows the last 14 days (lives and minutes) from the studio log.
 - Still not possible in a browser: virtual webcam, IP camera, motion detection. Facebook comments need extra Facebook permissions and were not built.
+
+### Connect channels from the dashboard
+- Destinations > **+ Add channel**: connect YouTube, Facebook Pages (all Pages you manage) or Twitch with one click, or pick any other platform (Instagram, LinkedIn, X, TikTok, Kick, Rumble, Amazon Live, Telegram, Custom) to add it with its RTMP address and stream key.
+- The first time, the admin enters the Client ID / secret of the Google, Facebook or Twitch app inside the dashboard (step-by-step guide with links is shown there). They are stored encrypted in the database; you no longer have to edit `.env`. Values in `.env` still work.
+- Instagram, LinkedIn, X and TikTok do not offer a public API to create lives, so they stay RTMP only.
