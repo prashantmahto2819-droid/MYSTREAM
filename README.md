@@ -173,3 +173,10 @@ If the app restarts with "unable to open database file", the data folder belongs
 - Live chat panel: YouTube (via a connected channel) and Twitch (read-only); press Show to put a message on the stream. Facebook chat is not supported.
 - A ManyCam-style virtual webcam cannot be made from a browser. Use OBS Virtual Camera or a separate native app for that.
 - Modern dark UI (glass cards, gradient tabs).
+
+### Multi-source studio
+- Several cameras (+ Another camera, choose which is main, "All cameras" scene) and several microphones, each with a level meter, volume and mute in the mixer.
+- Up to 8 guests. "Host + guests" scene auto-sizes the grid; 4 or fewer is smoother.
+- Speaker scene: one person big, others in a side strip. Auto picks whoever is talking (with a green ring), or choose a person manually.
+- Clip list: play any clip on live, optionally with your camera small on top, loop or return to the previous scene when it ends.
+- Backgrounds: colour, image or gradients. To see the background behind you, turn on "Remove my room (AI)" or green screen.

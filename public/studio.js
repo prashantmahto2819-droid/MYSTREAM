@@ -2,11 +2,11 @@
 // the chunks over a WebSocket to the server, which turns them into RTMP (see src/studio.js).
 const $ = (id) => document.getElementById(id);
 const W = 1280; const H = 720;
-const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['media', 'Media'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['standby', 'Standby']];
+const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['media', 'Clip'], ['speaker', 'Speaker'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['cams', 'All cameras'], ['standby', 'Standby']];
 const guests = new Map(); // id -> { name, pc, video }
 let hostWs = null;
 
-const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), gains: new Map(), t0: 0, timerEnd: 0 };
+const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), gains: new Map(), analysers: new Map(), labels: new Map(), micStreams: new Map(), levels: new Map(), raw: new Map(), extras: [], mainExtra: -1, spk: '', spkAt: 0, t0: 0, timerEnd: 0 };
 const vid = (stream) => { const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {}); return v; };
 const say = (m) => { $('st-msg').textContent = m || ''; };
 const badge = (t, cls = '') => { const b = $('st-badge'); b.textContent = t; b.className = `badge ${cls}`; };
@@ -21,16 +21,67 @@ function addNode(node, key) {
   const gain = ctx.createGain(); gain.gain.value = st.gains.get(key)?.userVolume ?? 1; gain.userVolume = gain.gain.value; gain.muted = st.gains.get(key)?.muted || false;
   if (gain.muted) gain.gain.value = 0;
   node.connect(gain); gain.connect(st.dest);
+  const an = ctx.createAnalyser(); an.fftSize = 512; gain.connect(an); st.analysers.set(key, { an, buf: new Uint8Array(an.fftSize) });
   st.mixed.set(key, node); st.gains.set(key, gain); renderMixer();
 }
 function addAudio(stream, key) {
   if (!stream.getAudioTracks().length) return;
   addNode(ensureAudio().createMediaStreamSource(new MediaStream(stream.getAudioTracks())), key);
 }
-function removeAudio(key) { st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect(); st.mixed.delete(key); st.gains.delete(key); renderMixer(); }
+function removeAudio(key) {
+  st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect(); st.mixed.delete(key); st.gains.delete(key); st.analysers.delete(key);
+  stopStream(st.micStreams.get(key)); st.micStreams.delete(key); st.labels.delete(key); renderMixer();
+}
+function updateLevels() {
+  st.raw.clear();
+  for (const [k, a] of st.analysers) {
+    a.an.getByteTimeDomainData(a.buf); let sum = 0;
+    for (const v of a.buf) { const d = (v - 128) / 128; sum += d * d; }
+    st.raw.set(k, Math.sqrt(sum / a.buf.length));
+  }
+  st.levels = new Map(st.raw);
+  for (const [k, v] of st.raw) if (k.startsWith('mic:')) st.levels.set('cam', Math.max(st.levels.get('cam') || 0, v));
+  for (const [k, m] of meters) m.value = Math.min(100, (st.raw.get(k) || 0) * 350);
+}
+const meters = new Map();
+async function addMic() {
+  const id = $('st-micdev').value; if (!id) return say('Choose a microphone in the list first.');
+  const key = `mic:${id}`; if (st.gains.has(key)) return say('That microphone is already added.');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: id }, echoCancellation: true, noiseSuppression: true } });
+    st.micStreams.set(key, stream); st.labels.set(key, $('st-micdev').selectedOptions[0]?.textContent || 'Microphone');
+    addAudio(stream, key); say('Microphone added');
+  } catch (e) { say(`Microphone not available: ${e.message}`); }
+}
+// ---- more cameras ----
+const mainCam = () => st.extras[st.mainExtra]?.video || st.camVideo || st.extras[0]?.video || null;
+async function addCamera() {
+  const id = $('st-camdev').value; if (!id) return say('Choose a camera in the list first.');
+  if (st.extras.some((x) => x.id === id)) return say('That camera is already added.');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, frameRate: 30, deviceId: { exact: id } }, audio: false });
+    st.extras.push({ id, label: $('st-camdev').selectedOptions[0]?.textContent || 'Camera', stream, video: vid(stream) });
+    renderCams(); say('Camera added. Use "All cameras" scene or make it the main camera.');
+  } catch (e) { say(`Camera not available: ${e.message}`); }
+}
+function renderCams() {
+  const ul = $('st-camlist'); ul.replaceChildren();
+  const row = (label, active, onUse, onRemove) => {
+    const li = document.createElement('li'); const d = document.createElement('div'); d.className = 'grow'; d.textContent = label;
+    const use = document.createElement('button'); use.className = active ? '' : 'ghost'; use.textContent = active ? 'Main' : 'Make main'; use.addEventListener('click', onUse);
+    li.append(d, use);
+    if (onRemove) { const rm = document.createElement('button'); rm.className = 'danger'; rm.textContent = 'Remove'; rm.addEventListener('click', onRemove); li.append(rm); }
+    ul.append(li);
+  };
+  if (st.camVideo) row('Camera 1 (with mic)', st.mainExtra < 0, () => { st.mainExtra = -1; renderCams(); });
+  st.extras.forEach((x, i) => row(x.label, st.mainExtra === i, () => { st.mainExtra = i; renderCams(); }, () => {
+    stopStream(x.stream); st.extras.splice(i, 1); if (st.mainExtra >= st.extras.length) st.mainExtra = -1; renderCams();
+  }));
+}
 function renderMixer() {
   const box = $('st-mixer'); if (!box) return;
-  const label = (k) => (k === 'cam' ? 'Microphone' : k === 'screen' ? 'Screen sound' : k === 'media' ? 'Media sound' : (guests.get(Number(k.slice(1)))?.name || 'Guest'));
+  const label = (k) => (st.labels.get(k) || k === 'cam' ? (st.labels.get(k) || 'Microphone') : k === 'screen' ? 'Screen sound' : k === 'media' ? 'Media sound' : (guests.get(Number(k.slice(1)))?.name || 'Guest'));
+  meters.clear();
   box.replaceChildren(...[...st.gains].map(([k, g]) => {
     const row = document.createElement('div'); row.className = 'row';
     const name = document.createElement('span'); name.className = 'grow'; name.textContent = label(k);
@@ -38,7 +89,10 @@ function renderMixer() {
     range.addEventListener('input', () => { g.userVolume = Number(range.value) / 100; if (!g.muted) g.gain.value = g.userVolume; });
     const mute = document.createElement('button'); mute.className = 'ghost'; mute.textContent = g.muted ? 'Unmute' : 'Mute';
     mute.addEventListener('click', () => { g.muted = !g.muted; g.gain.value = g.muted ? 0 : g.userVolume; mute.textContent = g.muted ? 'Unmute' : 'Mute'; });
-    row.append(name, range, mute); return row;
+    const meter = document.createElement('progress'); meter.max = 100; meter.value = 0; meter.style.cssText = 'width:60px;margin:0;height:8px'; meters.set(k, meter);
+    row.append(name, meter, range, mute);
+    if (k.startsWith('mic:')) { const rm = document.createElement('button'); rm.className = 'danger'; rm.textContent = 'x'; rm.addEventListener('click', () => removeAudio(k)); row.append(rm); }
+    return row;
   }));
 }
 function stopStream(s) { s?.getTracks().forEach((t) => t.stop()); }
@@ -50,7 +104,7 @@ async function useCamera() {
     st.cam = await navigator.mediaDevices.getUserMedia({
       video: { width: 1280, height: 720, frameRate: 30, ...(camId ? { deviceId: { exact: camId } } : {}) },
       audio: { echoCancellation: true, noiseSuppression: true, ...(micId ? { deviceId: { exact: micId } } : {}) } });
-    st.camVideo = vid(st.cam); addAudio(st.cam, 'cam'); say('Camera ready'); mark(); fillDevices();
+    st.camVideo = vid(st.cam); addAudio(st.cam, 'cam'); say('Camera ready'); mark(); fillDevices(); renderCams();
   } catch (e) { say(`Camera/mic not available: ${e.message}`); }
 }
 async function fillDevices() {
@@ -96,20 +150,31 @@ function contain(ctx, v, w, h) {
 }
 
 // ---- media scene (video / images / slides from your computer) ----
-const media = { items: [], i: 0, el: null };
+const media = { items: [], i: 0, el: null, prev: 'cam' };
+function renderClips() {
+  const ul = $('st-clips'); ul.replaceChildren();
+  media.items.forEach((f, i) => {
+    const li = document.createElement('li'); const d = document.createElement('div'); d.className = 'grow'; d.textContent = f.name;
+    const b = document.createElement('button'); b.className = i === media.i && media.el ? '' : 'ghost'; b.textContent = i === media.i && media.el ? 'Playing' : 'Play';
+    b.addEventListener('click', () => { media.i = i; showMedia(); });
+    li.append(d, b); ul.append(li);
+  });
+}
 function showMedia() {
   const f = media.items[media.i];
   if (media.el?.pause) media.el.pause();
   removeAudio('media'); media.el = null;
-  if (!f) { $('st-media-name').textContent = ''; return; }
+  if (!f) { $('st-media-name').textContent = ''; renderClips(); return; }
+  if (st.scene !== 'media') media.prev = st.scene;
   const url = URL.createObjectURL(f);
   if (f.type.startsWith('video/')) {
-    const v = document.createElement('video'); v.src = url; v.loop = true; v.playsInline = true; v.play().catch(() => {});
+    const v = document.createElement('video'); v.src = url; v.loop = $('st-media-loop').checked; v.playsInline = true; v.play().catch(() => {});
+    v.addEventListener('ended', () => { if (!v.loop && st.scene === 'media') setScene(media.prev || 'cam'); renderClips(); });
     try { ensureAudio(); st.audioCtx.resume(); addNode(st.audioCtx.createMediaElementSource(v), 'media'); } catch { /* ignore */ }
     media.el = v;
   } else { const img = new Image(); img.src = url; media.el = img; }
   $('st-media-name').textContent = `${media.i + 1}/${media.items.length}  ${f.name}`;
-  setScene('media');
+  setScene('media'); renderClips();
 }
 const pen = { on: false, strokes: [], cur: null };
 let chatMsg = null;
@@ -196,39 +261,73 @@ function keyed(v) {
   kctx.putImageData(img, 0, 0);
   return kc;
 }
+const GRADS = { grad1: ['#1d2b64', '#6a3093'], grad2: ['#ff7e5f', '#feb47b'], grad3: ['#0f2027', '#2c5364'], grad4: ['#11998e', '#38ef7d'] };
 function drawBackground(ctx) {
-  if (bg.mode === 'color') { ctx.fillStyle = bg.color; ctx.fillRect(0, 0, W, H); }
+  if (GRADS[bg.mode]) { const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, GRADS[bg.mode][0]); g.addColorStop(1, GRADS[bg.mode][1]); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+  else if (bg.mode === 'color') { ctx.fillStyle = bg.color; ctx.fillRect(0, 0, W, H); }
   else if (bg.mode === 'image' && bg.img) cover(ctx, bg.img, 0, 0, W, H);
   else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); }
 }
 
+function drawTile(ctx, t, x, y, w, h, speaking) {
+  if (t.host) drawCamera(ctx, t.v, x, y, w, h); else cover(ctx, t.v, x, y, w, h);
+  if (t.n) { ctx.font = 'bold 26px sans-serif'; ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x + 10, y + h - 50, ctx.measureText(t.n).width + 24, 38); ctx.fillStyle = '#fff'; ctx.fillText(t.n, x + 22, y + h - 22); }
+  if (speaking) { ctx.strokeStyle = '#34d399'; ctx.lineWidth = 6; ctx.strokeRect(x + 3, y + 3, w - 6, h - 6); }
+}
+function drawGrid(ctx, tiles, emptyText) {
+  if (!tiles.length) { ctx.fillStyle = '#222'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#aaa'; ctx.textAlign = 'center'; ctx.font = '32px sans-serif'; ctx.fillText(emptyText, W / 2, H / 2); ctx.textAlign = 'left'; return; }
+  const cols = Math.ceil(Math.sqrt(tiles.length)); const rows = Math.ceil(tiles.length / cols);
+  const tw = W / cols; const th = H / rows;
+  tiles.forEach((t, i) => drawTile(ctx, t, (i % cols) * tw + 2, Math.floor(i / cols) * th + 2, tw - 4, th - 4, false));
+}
+function people() {
+  const out = []; const me = mainCam(); if (me) out.push({ key: 'cam', v: me, n: '', host: true });
+  for (const [id, g] of guests) if (g.video && g.video.videoWidth) out.push({ key: `g${id}`, v: g.video, n: g.name });
+  return out;
+}
+function pickSpeaker(list, now) {
+  const mode = $('st-spk').value;
+  if (mode !== 'auto' && list.some((p) => p.key === mode)) return mode;
+  let best = null; let bl = 0;
+  for (const p of list) { const l = st.levels.get(p.key) || 0; if (l > bl) { bl = l; best = p.key; } }
+  if (best && bl > 0.04 && best !== st.spk && now - st.spkAt > 1200) { st.spk = best; st.spkAt = now; }
+  if (!list.some((p) => p.key === st.spk)) { st.spk = list[0]?.key || ''; st.spkAt = now; }
+  return st.spk;
+}
+function drawSpeaker(ctx, now) {
+  const list = people();
+  if (!list.length) return drawGrid(ctx, [], 'Turn on camera or wait for guests');
+  const key = pickSpeaker(list, now);
+  const big = list.find((p) => p.key === key) || list[0]; const others = list.filter((p) => p !== big);
+  const strip = others.length ? 300 : 0; const bw = W - strip;
+  drawTile(ctx, big, 0, 0, bw, H, others.length > 0 && (st.levels.get(big.key) || 0) > 0.04);
+  const th = Math.min(169, Math.floor(H / Math.max(1, others.length)) - 6);
+  others.forEach((p, i) => drawTile(ctx, p, bw + 6, i * (th + 6) + 3, strip - 9, th, (st.levels.get(p.key) || 0) > 0.04));
+}
 function draw(now) {
   const c = $('st-canvas'); const ctx = c.getContext('2d');
   hits = [];
   drawBackground(ctx);
   const scene = st.scene;
-  if (scene === 'cam' && st.camVideo) drawCamera(ctx, st.camVideo, 0, 0, W, H);
-  else if (scene === 'media' && media.el) contain(ctx, media.el, W, H);
-  else if (scene === 'screen' && st.screenVideo) contain(ctx, st.screenVideo, W, H);
+  const main = mainCam();
+  if (scene === 'cam' && main) drawCamera(ctx, main, 0, 0, W, H);
+  else if (scene === 'media' && media.el) {
+    contain(ctx, media.el, W, H);
+    if ($('st-media-cam').checked && main) drawPip(ctx, main);
+  } else if (scene === 'screen' && st.screenVideo) contain(ctx, st.screenVideo, W, H);
   else if (scene === 'pip' && st.screenVideo) {
     contain(ctx, st.screenVideo, W, H);
-    if (st.camVideo) drawPip(ctx, st.camVideo);
+    if (main) drawPip(ctx, main);
+  } else if (scene === 'speaker') drawSpeaker(ctx, now);
+  else if (scene === 'cams') {
+    const all = [st.camVideo, ...st.extras.map((x) => x.video)].filter((v) => v && v.videoWidth);
+    drawGrid(ctx, all.map((v) => ({ v, n: '', host: v === st.camVideo })), 'No cameras yet');
   } else if (scene === 'guest' || scene === 'grid') {
     const gs = [...guests.values()].filter((g) => g.video && g.video.videoWidth);
     if (scene === 'guest' && gs.length) {
       cover(ctx, gs[0].video, 0, 0, W, H);
-      if (st.camVideo) drawPip(ctx, st.camVideo);
-    } else {
-      const tiles = [st.camVideo && { v: st.camVideo, n: '' }, ...gs.map((g) => ({ v: g.video, n: g.name }))].filter(Boolean);
-      if (!tiles.length) { ctx.fillStyle = '#222'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#aaa'; ctx.textAlign = 'center'; ctx.font = '32px sans-serif'; ctx.fillText('Waiting for guests…', W / 2, H / 2); ctx.textAlign = 'left'; }
-      const cols = tiles.length <= 1 ? 1 : 2; const rows = Math.ceil(tiles.length / cols);
-      const tw = W / cols; const th = H / rows;
-      tiles.forEach((t, i) => {
-        const x = (i % cols) * tw; const y = Math.floor(i / cols) * th;
-        if (t.v === st.camVideo) drawCamera(ctx, t.v, x + 2, y + 2, tw - 4, th - 4); else cover(ctx, t.v, x + 2, y + 2, tw - 4, th - 4);
-        if (t.n) { ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x + 12, y + th - 56, ctx.measureText(t.n).width + 24, 40); ctx.fillStyle = '#fff'; ctx.fillText(t.n, x + 24, y + th - 26); }
-      });
-    }
+      if (main) drawPip(ctx, main);
+    } else drawGrid(ctx, [main && { v: main, n: '', host: true }, ...gs.map((g) => ({ v: g.video, n: g.name }))].filter(Boolean), 'Waiting for guests…');
   } else if (scene === 'standby') {
     const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#1d2b64'); g.addColorStop(1, '#6a3093');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -286,6 +385,10 @@ function draw(now) {
 
 // ---- guests (WebRTC to the host's browser; the server only relays signalling) ----
 function renderGuests() {
+  const sel = $('st-spk'); const cur = sel.value; sel.replaceChildren();
+  const add = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.append(o); };
+  add('auto', 'Auto (whoever speaks)'); add('cam', 'Me'); for (const [id, g] of guests) add(`g${id}`, g.name);
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : 'auto';
   const ul = $('st-guests'); ul.replaceChildren();
   for (const [id, g] of guests) {
     const li = document.createElement('li'); const span = document.createElement('div'); span.className = 'grow'; span.textContent = g.name;
@@ -566,7 +669,7 @@ function init() {
   });
   $('st-camdev').addEventListener('change', () => { if (st.cam) useCamera(); });
   $('st-micdev').addEventListener('change', () => { if (st.cam) useCamera(); });
-  $('st-media-files').addEventListener('change', (e) => { media.items = [...e.target.files]; media.i = 0; showMedia(); });
+  $('st-media-files').addEventListener('change', (e) => { media.items = [...e.target.files]; media.i = 0; renderClips(); });
   $('st-media-next').addEventListener('click', () => { if (media.items.length) { media.i = (media.i + 1) % media.items.length; showMedia(); } });
   $('st-media-prev').addEventListener('click', () => { if (media.items.length) { media.i = (media.i - 1 + media.items.length) % media.items.length; showMedia(); } });
   $('st-media-play').addEventListener('click', () => { const v = media.el; if (v?.pause) { if (v.paused) v.play(); else v.pause(); } });
@@ -584,6 +687,10 @@ function init() {
     else if (e.key === 'ArrowLeft') $('st-media-prev').click();
     else if (e.key.toLowerCase() === 'd') $('st-draw').click();
   });
+  $('st-addcam').addEventListener('click', addCamera);
+  $('st-addmic').addEventListener('click', addMic);
+  $('st-media-loop').addEventListener('change', (e) => { if (media.el?.pause) media.el.loop = e.target.checked; });
+  setInterval(updateLevels, 100);
   initChat();
   $('st-rec').addEventListener('click', toggleRecord);
   $('st-start').addEventListener('click', goLive);

@@ -2,7 +2,7 @@ import { randomToken } from './crypto.js';
 import { encodeText, encodeClose, encodeFrame, FrameParser, handshake, sameOrigin } from './ws.js';
 
 const INVITE_TTL_MS = 6 * 3600 * 1000;
-const MAX_GUESTS = 3;
+const MAX_GUESTS = 8;
 
 /**
  * Signalling only: guests send their camera/mic straight to the host's browser (WebRTC), the

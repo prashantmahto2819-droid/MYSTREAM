@@ -74,8 +74,8 @@ test('guests: invite needs login, host and guest signalling flows, limits', asyn
   await sleep(40);
   assert.equal(g1.msgs.at(-1).type, 'signal');
 
-  await ws(t, `/api/guest/join?token=${tk}&name=B`); await ws(t, `/api/guest/join?token=${tk}&name=C`);
-  assert.equal((await ws(t, `/api/guest/join?token=${tk}&name=D`)).status, 429, 'max 3 guests');
+  for (const n of ['B', 'C', 'D', 'E', 'F', 'G', 'H']) await ws(t, `/api/guest/join?token=${tk}&name=${n}`);
+  assert.equal((await ws(t, `/api/guest/join?token=${tk}&name=I`)).status, 429, 'max 8 guests');
 
   host.send({ type: 'kick', to: 1 });
   await sleep(40);
