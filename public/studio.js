@@ -26,7 +26,9 @@ function addNode(node, key) {
 }
 function addAudio(stream, key) {
   if (!stream.getAudioTracks().length) return;
-  addNode(ensureAudio().createMediaStreamSource(new MediaStream(stream.getAudioTracks())), key);
+  const ctx = ensureAudio(); const src = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+  if (key === 'cam') { const d = ctx.createDelay(1); d.delayTime.value = Number($('st-adelay').value) / 1000; src.connect(d); st.camDelay = d; addNode(d, key); return; }
+  addNode(src, key);
 }
 function removeAudio(key) {
   st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect(); st.mixed.delete(key); st.gains.delete(key); st.analysers.delete(key);
@@ -100,10 +102,10 @@ function stopStream(s) { s?.getTracks().forEach((t) => t.stop()); }
 async function useCamera() {
   try {
     stopStream(st.cam);
-    const camId = $('st-camdev').value; const micId = $('st-micdev').value;
+    const camId = $('st-camdev').value; const micId = $('st-micdev').value; const res = $('st-camres').value.split('x').map(Number);
     st.cam = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, frameRate: 30, ...(camId ? { deviceId: { exact: camId } } : {}) },
-      audio: { echoCancellation: true, noiseSuppression: true, ...(micId ? { deviceId: { exact: micId } } : {}) } });
+      video: { width: res[0], height: res[1], frameRate: Number($('st-camfps').value), ...(camId ? { deviceId: { exact: camId } } : {}) },
+      audio: { echoCancellation: $('st-ec').checked, noiseSuppression: $('st-ns').checked, autoGainControl: $('st-agc').checked, ...(micId ? { deviceId: { exact: micId } } : {}) } });
     st.camVideo = vid(st.cam); addAudio(st.cam, 'cam'); say('Camera ready'); mark(); fillDevices(); renderCams();
   } catch (e) { say(`Camera/mic not available: ${e.message}`); }
 }
@@ -176,7 +178,7 @@ function showMedia() {
   $('st-media-name').textContent = `${media.i + 1}/${media.items.length}  ${f.name}`;
   setScene('media'); renderClips();
 }
-let overlayImg = null;
+let overlayImg = null; let stickerImg = null;
 // ---- background music ----
 const music = { items: [], i: 0, el: null };
 function renderMusic() {
@@ -197,8 +199,8 @@ function playMusic() {
   a.play().catch(() => {}); music.el = a; renderMusic();
 }
 // ---- saved scenes (stored in this browser) ----
-const SCENE_FIELDS = ['st-lower', 'st-ticker', 'st-standby', 'st-theme', 'st-font', 'st-filter', 'st-timer', 'st-bg', 'st-bg-color', 'st-bright', 'st-contrast', 'st-sat'];
-const SCENE_CHECKS = ['st-mirror', 'st-touch'];
+const SCENE_FIELDS = ['st-lower', 'st-ticker', 'st-standby', 'st-theme', 'st-font', 'st-filter', 'st-timer', 'st-bg', 'st-bg-color', 'st-bright', 'st-contrast', 'st-sat', 'st-red', 'st-green', 'st-blue', 'st-temp', 'st-tint', 'st-hue', 'st-sharp', 'st-vig', 'st-zoom', 'st-panx', 'st-pany', 'st-rot', 'st-opacity', 'st-radius', 'st-fit', 'st-crop-l', 'st-crop-r', 'st-crop-t', 'st-crop-b', 'st-text', 'st-text-size', 'st-text-color'];
+const SCENE_CHECKS = ['st-mirror', 'st-touch', 'st-flipv'];
 const loadSaved = () => { try { return JSON.parse(localStorage.getItem('vs_scenes') || '[]'); } catch { return []; } };
 function renderSaved() {
   const ul = $('st-saved'); ul.replaceChildren();
@@ -213,6 +215,7 @@ function renderSaved() {
 function applySaved(sc) {
   for (const id of SCENE_FIELDS) if (sc.f[id] !== undefined) { $(id).value = sc.f[id]; $(id).dispatchEvent(new Event('change')); $(id).dispatchEvent(new Event('input')); }
   for (const id of SCENE_CHECKS) if (sc.c[id] !== undefined) $(id).checked = sc.c[id];
+  updateLook();
   if (sc.scene) setScene(sc.scene);
 }
 function saveScene() {
@@ -222,12 +225,30 @@ function saveScene() {
   try { localStorage.setItem('vs_scenes', JSON.stringify(all.slice(-20))); } catch { say('Could not save in this browser.'); }
   renderSaved();
 }
+const TEMPLATES = {
+  'Business - Introduction': { scene: 'cam', f: { 'st-theme': 'base', 'st-lower': 'Your name  |  Your title', 'st-bg': 'grad3', 'st-ticker': '' } },
+  'Business - Be right back': { scene: 'standby', f: { 'st-standby': 'We will be right back', 'st-bg': 'grad3' } },
+  'Business - Presenter + slides': { scene: 'pip', f: { 'st-theme': 'base', 'st-lower': 'Presenter name', 'st-bg': 'grad3' } },
+  'Business - Two cameras': { scene: 'cams', f: { 'st-theme': 'base' } },
+  'Education - Class starts in': { scene: 'countdown', f: { 'st-standby': 'Class starts in', 'st-theme': 'round' }, timer: 5 },
+  'Education - Teacher + screen': { scene: 'pip', f: { 'st-theme': 'round', 'st-lower': 'Topic of today', 'st-bg': 'grad1' } },
+  'Gaming - Screen + camera': { scene: 'pip', f: { 'st-theme': 'news', 'st-filter': 'vivid', 'st-bg': 'grad1' } },
+  'News - Speaker with ticker': { scene: 'speaker', f: { 'st-theme': 'news', 'st-ticker': 'Breaking news: write your headline here', 'st-lower': 'Reporter name' } },
+  'Podcast - Side by side': { scene: 'side', f: { 'st-theme': 'round', 'st-bg': 'grad4' } },
+  'Interview - Host + guests': { scene: 'grid', f: { 'st-theme': 'air', 'st-bg': 'grad3' } },
+};
+function applyTemplate() {
+  const t = TEMPLATES[$('st-template').value]; if (!t) return;
+  applySaved({ scene: t.scene, f: t.f, c: {} });
+  if (t.timer) { st.timerEnd = Date.now() + t.timer * 60000; }
+  say(`Template applied: ${$('st-template').value}`);
+}
 let teleTimer = null;
 const pen = { on: false, strokes: [], cur: null };
 let chatMsg = null;
 
 // ---- layout the user can drag on the preview ----
-const makeLayout = () => ({ pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 } });
+const makeLayout = () => ({ pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 }, text: { x: 60, y: 90 }, sticker: { x: 60, y: Math.round(H / 2 - 80) } });
 const layout = makeLayout();
 function setOrientation(portrait) {
   if (st.live || local) return say('Stop the live / recording before changing orientation.');
@@ -253,14 +274,51 @@ const FILTERS = { none: '', bw: 'grayscale(1)', sepia: 'sepia(.85)', warm: 'sepi
 let hits = []; let drag = null;
 const toCanvas = (e) => { const r = $('st-canvas').getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
 const hitAt = (x, y) => [...hits].reverse().find((h) => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+const look = { filter: '', zoom: 1, px: 0, py: 0, rot: 0, flipV: false, vig: 0, op: 1, rad: 0, fit: 'fill', cl: 0, cr: 0, ct: 0, cb: 0 };
+function updateLook() {
+  const v = (id) => Number($(id).value);
+  const r = v('st-red') / 100; const g = v('st-green') / 100; const b = v('st-blue') / 100; const temp = v('st-temp') / 100; const tint = v('st-tint') / 100;
+  const R = Math.max(0, r * (1 + temp * 0.35)); const G = Math.max(0, g * (1 - tint * 0.25)); const B = Math.max(0, b * (1 - temp * 0.35));
+  $('vs-cm-m').setAttribute('values', `${R} 0 0 0 0  0 ${G} 0 0 0  0 0 ${B} 0 0  0 0 0 1 0`);
+  const a = (v('st-sharp') / 100) * 1.2;
+  $('vs-sh-m').setAttribute('kernelMatrix', `0 ${-a} 0 ${-a} ${1 + 4 * a} ${-a} 0 ${-a} 0`);
+  const parts = [];
+  if (v('st-bright') !== 100 || v('st-contrast') !== 100 || v('st-sat') !== 100) parts.push(`brightness(${v('st-bright')}%) contrast(${v('st-contrast')}%) saturate(${v('st-sat')}%)`);
+  if (v('st-hue')) parts.push(`hue-rotate(${v('st-hue')}deg)`);
+  if (FILTERS[$('st-filter').value]) parts.push(FILTERS[$('st-filter').value]);
+  if ($('st-touch').checked) parts.push('blur(0.9px) brightness(1.06) saturate(1.05)');
+  if (R !== 1 || G !== 1 || B !== 1) parts.push('url(#vs-cm)');
+  if (a > 0) parts.push('url(#vs-sh)');
+  look.filter = parts.join(' ');
+  look.zoom = v('st-zoom') / 100; look.px = v('st-panx') / 100; look.py = v('st-pany') / 100;
+  look.rot = (Number($('st-rot').value) * Math.PI) / 180; look.flipV = $('st-flipv').checked; look.vig = v('st-vig') / 100;
+  look.op = v('st-opacity') / 100; look.rad = v('st-radius') / 100; look.fit = $('st-fit').value;
+  look.cl = v('st-crop-l') / 100; look.cr = v('st-crop-r') / 100; look.ct = v('st-crop-t') / 100; look.cb = v('st-crop-b') / 100;
+}
 function drawCamera(ctx, v, x, y, w, h) {
-  const b = $('st-bright').value; const c = $('st-contrast').value; const sa = $('st-sat').value;
   ctx.save();
-  const f = [b !== '100' || c !== '100' || sa !== '100' ? `brightness(${b}%) contrast(${c}%) saturate(${sa}%)` : '', FILTERS[$('st-filter').value] || '', $('st-touch').checked ? 'blur(0.9px) brightness(1.06) saturate(1.05)' : ''].filter(Boolean).join(' ');
-  if (f) ctx.filter = f;
-  if ($('st-mirror').checked) { ctx.translate(x + w / 2, 0); ctx.scale(-1, 1); ctx.translate(-(x + w / 2), 0); }
-  cover(ctx, keyed(v), x, y, w, h);
+  if (look.filter) ctx.filter = look.filter;
+  ctx.globalAlpha = look.op;
+  {
+    const cx = x + w * look.cl; const cy = y + h * look.ct; const cw = w * (1 - look.cl - look.cr); const ch = h * (1 - look.ct - look.cb);
+    ctx.beginPath();
+    if (look.rad > 0 && ctx.roundRect) ctx.roundRect(cx, cy, cw, ch, look.rad * Math.min(cw, ch) / 2); else ctx.rect(cx, cy, cw, ch);
+    ctx.clip();
+  }
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.translate(look.px * ((look.zoom - 1) * w) / 2, look.py * ((look.zoom - 1) * h) / 2);
+  if (look.rot) ctx.rotate(look.rot);
+  ctx.scale(look.zoom * ($('st-mirror').checked ? -1 : 1), look.zoom * (look.flipV ? -1 : 1));
+  const swap = Math.round(look.rot / (Math.PI / 2)) % 2 !== 0;
+  const dw = swap ? h : w; const dh = swap ? w : h;
+  const src = keyed(v);
+  if (look.fit === 'fit') contain(ctx, src, dw, dh, -dw / 2, -dh / 2); else if (look.fit === 'stretch') ctx.drawImage(src, -dw / 2, -dh / 2, dw, dh); else cover(ctx, src, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
+  if (look.vig > 0) {
+    const g = ctx.createRadialGradient(x + w / 2, y + h / 2, Math.min(w, h) * 0.25, x + w / 2, y + h / 2, Math.hypot(w, h) / 2);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${look.vig})`);
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.fillStyle = g; ctx.fillRect(x, y, w, h); ctx.restore();
+  }
 }
 function drawPip(ctx, v) {
   const { x, y, w } = layout.pip; const h = Math.round(w * 9 / 16);
@@ -450,6 +508,16 @@ function draw(now) {
   const bare = scene === 'standby' || scene === 'countdown';
   const th = theme();
   if (overlayImg && $('st-overlay-on').checked && !bare) ctx.drawImage(overlayImg, 0, 0, W, H);
+  const txt = $('st-text').value.trim();
+  if (txt && !bare) {
+    const size = Number($('st-text-size').value); ctx.font = fnt(size); const { x, y } = layout.text;
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 8; ctx.fillStyle = $('st-text-color').value; ctx.fillText(txt, x, y + size, W - x - 20); ctx.restore();
+    hits.push({ id: 'text', x, y, w: Math.min(ctx.measureText(txt).width, W - x - 20), h: Math.round(size * 1.25) });
+  }
+  if (stickerImg && !bare) {
+    const h = Number($('st-sticker-size').value); const w = Math.round(stickerImg.width * (h / stickerImg.height)); const { x, y } = layout.sticker;
+    ctx.drawImage(stickerImg, x, y, w, h); hits.push({ id: 'sticker', x, y, w, h });
+  }
   if (st.logo && !bare) {
     const { x, y, h } = layout.logo; const w = st.logo.width * (h / st.logo.height);
     ctx.drawImage(st.logo, x, y, w, h); hits.push({ id: 'logo', x, y, w, h });
@@ -816,12 +884,26 @@ function init() {
   $('st-cap').addEventListener('change', (e) => { if (e.target.checked) startCaptions(); else stopCaptions(); });
   $('st-cap-lang').addEventListener('change', () => { if ($('st-cap').checked) { stopCaptions(); startCaptions(); } });
   $('st-savescene').addEventListener('click', saveScene); renderSaved();
+  for (const k of Object.keys(TEMPLATES)) { const o = document.createElement('option'); o.value = k; o.textContent = k; $('st-template').append(o); }
+  $('st-template-apply').addEventListener('click', applyTemplate);
   try { $('st-notes').value = localStorage.getItem('vs_notes') || ''; } catch { /* ignore */ }
   $('st-notes').addEventListener('input', () => { try { localStorage.setItem('vs_notes', $('st-notes').value); } catch { /* ignore */ } });
   $('st-tele').addEventListener('change', (e) => {
     clearInterval(teleTimer); if (!e.target.checked) return;
     teleTimer = setInterval(() => { const n = $('st-notes'); n.scrollTop += Number($('st-tele-speed').value) / 10; }, 50);
   });
+  for (const ev of ['input', 'change']) $('studio-card').addEventListener(ev, updateLook);
+  updateLook();
+  $('st-color-reset').addEventListener('click', () => {
+    for (const id of ['st-red', 'st-green', 'st-blue', 'st-temp', 'st-tint', 'st-hue', 'st-sharp', 'st-vig', 'st-zoom', 'st-panx', 'st-pany', 'st-bright', 'st-contrast', 'st-sat', 'st-opacity', 'st-radius', 'st-crop-l', 'st-crop-r', 'st-crop-t', 'st-crop-b']) $(id).value = $(id).defaultValue;
+    $('st-fit').value = 'fill';
+    $('st-rot').value = '0'; $('st-filter').value = 'none'; $('st-flipv').checked = false; $('st-touch').checked = false; $('st-mirror').checked = false; updateLook();
+  });
+  $('st-adelay').addEventListener('input', (e) => { if (st.camDelay) st.camDelay.delayTime.value = Number(e.target.value) / 1000; });
+  $('st-freeze').addEventListener('click', () => {
+    const v = mainCam(); if (!v) return; if (v.paused) { v.play(); $('st-freeze').textContent = 'Freeze camera'; } else { v.pause(); $('st-freeze').textContent = 'Unfreeze camera'; }
+  });
+  $('st-sticker-file').addEventListener('change', (e) => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { stickerImg = img; }; img.src = URL.createObjectURL(f); });
   $('st-addcam').addEventListener('click', addCamera);
   $('st-addmic').addEventListener('click', addMic);
   $('st-media-loop').addEventListener('change', (e) => { if (media.el?.pause) media.el.loop = e.target.checked; });

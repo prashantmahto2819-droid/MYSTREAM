@@ -187,3 +187,12 @@ If the app restarts with "unable to open database file", the data folder belongs
 - Background music with volume in the mixer, live captions (Hindi / English, Chrome or Edge), private notes with teleprompter scroll.
 - More destination presets: TikTok, Rumble, Amazon Live, Telegram (paste the server URL they give you).
 - Not built: QR codes, webinar pages, analytics, AI music.
+
+### ManyCam-style camera tools
+- Colour mixer: red/green/blue, temperature, tint, hue, brightness/contrast/colour, sharpen, vignette, filters, reset button.
+- Layer settings: zoom, move, rotate, mirror/flip, fit/fill/stretch, opacity, corner radius, crop, freeze camera.
+- Camera size/fps, echo cancel/noise reduction/auto volume, mic delay (lip-sync), free text and sticker (drag on preview).
+- Templates (Business, Education, Gaming, News, Podcast, Interview) and saved scenes.
+- A phone can be used as another camera: send it the guest invite link.
+- Not built: IP camera input, motion detection, game/desktop capture drivers, virtual webcam (browser limits).
+- The page uses a strict CSP: never use inline `style="..."` attributes, use classes in style.css.

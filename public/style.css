@@ -111,3 +111,10 @@ progress { width:100%; height:10px; margin-top:8px; accent-color:var(--accent); 
   .studio { grid-template-columns:1fr; }
   .studio .stack { max-height:none; overflow:visible; }
 }
+
+.vs-defs { position:absolute; width:0; height:0; overflow:hidden; }
+
+.notes { width:100%; font-size:18px; background:rgba(5,8,14,.6); color:inherit; border:1px solid var(--line2); border-radius:12px; padding:10px; font-family:inherit; }
+.w140 { width:140px; } .w80 { width:80px; } .mt8 { margin-top:8px; } .top6 { margin-top:6vh; }
+.scroll { max-height:260px; overflow:auto; }
+.gvid { width:100%; background:#000; border-radius:12px; aspect-ratio:16/9; }

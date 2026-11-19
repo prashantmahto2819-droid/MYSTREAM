@@ -7,12 +7,12 @@
   <link rel="stylesheet" href="/style.css?v=4">
 </head>
 <body>
-  <main class="card narrow" style="margin-top:6vh">
+  <main class="card narrow top6">
     <h1>Join the live</h1>
     <p class="muted">Allow your camera and microphone. Use headphones to avoid echo.</p>
-    <video id="g-preview" autoplay muted playsinline style="width:100%;background:#000;border-radius:8px;aspect-ratio:16/9"></video>
+    <video id="g-preview" class="gvid" autoplay muted playsinline></video>
     <audio id="g-remote" autoplay></audio>
-    <video id="g-program" autoplay muted playsinline class="hidden" style="width:100%;background:#000;border-radius:8px;aspect-ratio:16/9;margin-top:8px"></video>
+    <video id="g-program" class="gvid hidden mt8" autoplay muted playsinline></video>
     <label>Your name <input id="g-name" maxlength="40" placeholder="Your name"></label>
     <div class="row"><button id="g-join">Join</button><button id="g-mute" class="ghost hidden">Mute mic</button><button id="g-leave" class="danger hidden">Leave</button></div>
     <p id="g-msg" class="sub"></p>
