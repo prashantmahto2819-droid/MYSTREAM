@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vivid Stream</title>
-  <link rel="stylesheet" href="/style.css?v=9">
+  <link rel="stylesheet" href="/style.css?v=10">
 </head>
 <body>
   <main id="login" class="card narrow hidden">
@@ -42,20 +42,6 @@
       <section class="card wide hidden" id="standby-banner" data-tab="studio">
         <strong>Standby screen is live.</strong> <span class="muted">OBS is disconnected. Reconnect OBS and it takes over, or stop here.</span>
         <button id="standby-stop" class="danger">Stop standby (end live)</button>
-      </section>
-
-      <section class="card wide" id="notes-card" data-tab="studio">
-        <h2>Private notes / teleprompter</h2>
-        <p class="muted">Only you see this. It is not on the stream.</p>
-        <textarea id="st-notes" rows="6" placeholder="Your script or points..." class="notes"></textarea>
-        <div class="row"><label class="switch"><input type="checkbox" id="st-tele"> Auto-scroll</label><input id="st-tele-speed" class="w140" type="range" min="2" max="40" value="10"></div>
-      </section>
-
-      <section class="card wide" id="chat-card" data-tab="studio">
-        <h2>Live chat (all in one place)</h2>
-        <p class="muted">Read chat from YouTube and Twitch here and press Show to put a message on the stream. Facebook chat is not available.</p>
-        <div class="row"><select id="chat-yt"></select><button id="chat-yt-go" class="ghost">Start YouTube chat</button><input id="chat-twitch" placeholder="Twitch channel" maxlength="25"><button id="chat-twitch-go" class="ghost">Start Twitch chat</button></div>
-        <ul id="chat-list" class="list scroll"></ul>
       </section>
 
       <section class="card wide" id="studio-card" data-tab="studio">
@@ -177,6 +163,20 @@
             <div class="row"><button id="st-rec" class="ghost">● Record</button><button id="st-start">Go live</button><button id="st-stop" class="danger hidden">Stop</button></div>
           </div>
         </div>
+      </section>
+
+      <section class="card wide" id="notes-card" data-tab="studio">
+        <h2>Private notes / teleprompter</h2>
+        <p class="muted">Only you see this. It is not on the stream.</p>
+        <textarea id="st-notes" rows="6" placeholder="Your script or points..." class="notes"></textarea>
+        <div class="row"><label class="switch"><input type="checkbox" id="st-tele"> Auto-scroll</label><input id="st-tele-speed" class="w140" type="range" min="2" max="40" value="10"></div>
+      </section>
+
+      <section class="card wide" id="chat-card" data-tab="studio">
+        <h2>Live chat (all in one place)</h2>
+        <p class="muted">Read chat from YouTube and Twitch here and press Show to put a message on the stream. Facebook chat is not available.</p>
+        <div class="row"><select id="chat-yt"></select><button id="chat-yt-go" class="ghost">Start YouTube chat</button><input id="chat-twitch" placeholder="Twitch channel" maxlength="25"><button id="chat-twitch-go" class="ghost">Start Twitch chat</button></div>
+        <ul id="chat-list" class="list scroll"></ul>
       </section>
 
       <section class="card" data-tab="studio">
@@ -314,8 +314,8 @@
       </section>
     </main>
   </div>
-  <script src="/app.js?v=9" type="module"></script>
-  <script src="/studio.js?v=9" type="module"></script>
-  <script src="/nav.js?v=9" type="module"></script>
+  <script src="/app.js?v=10" type="module"></script>
+  <script src="/studio.js?v=10" type="module"></script>
+  <script src="/nav.js?v=10" type="module"></script>
 </body>
 </html>
