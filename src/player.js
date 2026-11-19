@@ -106,6 +106,7 @@ export class SchedulePlayer {
 
   end(s, user, state, status, error) {
     this.running.delete(s.id);
+    this.relay.noteExpectedDrop?.(user.ingest_key);
     this.relay.setFilter(user.ingest_key, null);
     fs.rmSync(state.listFile, { force: true });
     this.finish(s, status, error, true);

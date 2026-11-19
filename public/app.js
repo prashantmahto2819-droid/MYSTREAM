@@ -73,7 +73,8 @@ async function refresh() {
     const info = el('div', { class: 'grow' },
       el('div', {}, d.name, me.role === 'admin' && d.user_id !== me.id ? ' (other user)' : ''),
       el('div', { class: 'sub' }, d.rtmp_url),
-      d.error ? el('div', { class: 'sub err-text' }, d.error) : '');
+      d.error ? el('div', { class: 'sub err-text' }, d.error) : '',
+      d.stats ? el('div', { class: 'sub' }, `${Math.round(d.stats.bitrateKbps || 0)} kbps · speed ${(d.stats.speed || 0).toFixed(2)}x`) : '');
     const toggle = el('label', { class: 'switch' },
       el('input', { type: 'checkbox', ...(d.enabled ? { checked: '' } : {}),
         onchange: async (e) => {
@@ -95,7 +96,7 @@ async function refresh() {
   $('activity').replaceChildren(...a.activity.slice(0, 30).map((x) =>
     el('li', {}, el('span', { class: 'sub' }, x.ts), el('span', { class: 'grow' }, `${x.user_name || 'system'} · ${x.action.replace(/_/g, ' ')}${x.detail ? ' — ' + x.detail : ''}`))));
 
-  await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage()]);
+  await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings()]);
   renderScheduleChoices(s.destinations);
   if (me.role === 'admin') await refreshUsers();
 }
@@ -280,7 +281,61 @@ async function loadSettings() {
   const s = await api('GET', '/api/me/settings');
   $('phone').value = s.phone || '';
   $('phone-note').textContent = s.alertsConfigured ? '' : 'WhatsApp alerts are not set up on the server yet.';
+  $('record-toggle').checked = !!s.record;
+  $('record-note').textContent = `(kept ${s.recordingKeepDays} days)`;
+  await refreshKeys();
 }
+
+async function refreshRecordings() {
+  const { recordings } = await api('GET', '/api/recordings');
+  $('rec-list').replaceChildren(...recordings.map((r) => el('li', {},
+    el('div', { class: 'grow' }, r.title, el('div', { class: 'sub' }, `${fmtBytes(r.size)} · ${r.status === 'recording' ? 'recording now…' : fmtTime(r.ended_at)}`)),
+    r.status === 'done' ? el('a', { href: `/api/recordings/${r.id}/download`, class: 'btnlink' }, 'Download') : '',
+    r.status === 'done' ? el('button', { class: 'ghost', onclick: async () => {
+      try { await api('POST', `/api/recordings/${r.id}/to-video`); await refresh(); } catch (err) { alert(err.message); }
+    } }, 'Use as video') : '',
+    r.status === 'done' ? el('button', { class: 'danger', onclick: async () => {
+      if (!confirm('Delete this recording?')) return;
+      try { await api('DELETE', `/api/recordings/${r.id}`); await refresh(); } catch (err) { alert(err.message); }
+    } }, 'Delete') : '')));
+  $('rec-empty').classList.toggle('hidden', recordings.length > 0);
+}
+
+async function refreshKeys() {
+  const { keys } = await api('GET', '/api/keys');
+  $('key-list').replaceChildren(...keys.map((k) => el('li', {},
+    el('div', { class: 'grow' }, k.name, el('div', { class: 'sub' }, `${k.prefix}… · created ${k.created_at}${k.last_used_at ? ' · last used ' + fmtTime(k.last_used_at) : ''}`)),
+    el('button', { class: 'danger', onclick: async () => {
+      if (!confirm(`Revoke "${k.name}"? Software using it will stop working.`)) return;
+      try { await api('DELETE', `/api/keys/${k.id}`); await refreshKeys(); } catch (err) { alert(err.message); }
+    } }, 'Revoke'))));
+}
+
+$('record-toggle').addEventListener('change', async (e) => {
+  try { await api('PATCH', '/api/me', { record: e.target.checked }); } catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
+});
+
+$('pw-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api('POST', '/api/me/password', { current: f.get('current'), new: f.get('new') });
+    e.target.reset();
+    $('pw-note').textContent = 'Password changed. Other devices were signed out.';
+  } catch (err) { $('pw-note').textContent = err.message; }
+});
+
+$('key-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('key-error').textContent = '';
+  try {
+    const { token } = await api('POST', '/api/keys', { name: new FormData(e.target).get('name') });
+    $('key-new-value').value = token;
+    $('key-new').classList.remove('hidden');
+    e.target.reset();
+    await refreshKeys();
+  } catch (err) { $('key-error').textContent = err.message; }
+});
 
 async function refreshUsers() {
   const { users } = await api('GET', '/api/users');

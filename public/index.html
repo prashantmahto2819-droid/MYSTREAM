@@ -88,6 +88,36 @@
         </form>
       </section>
 
+      <section class="card">
+        <h2>5. Recordings</h2>
+        <p class="muted">A copy of your OBS lives, kept for a few days. Turn it on under Settings.</p>
+        <ul id="rec-list" class="list"></ul>
+        <p id="rec-empty" class="muted hidden">No recordings.</p>
+      </section>
+
+      <section class="card">
+        <h2>Settings</h2>
+        <label class="switch"><input type="checkbox" id="record-toggle"> Record my OBS lives <span id="record-note" class="sub"></span></label>
+        <form id="pw-form" class="stack">
+          <h3>Change password</h3>
+          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+          <label>New password (8+ characters) <input name="new" type="password" minlength="8" autocomplete="new-password" required></label>
+          <button type="submit" class="ghost">Change password</button>
+          <p id="pw-note" class="sub"></p>
+        </form>
+        <h3>API keys (for other software, e.g. Vividora)</h3>
+        <ul id="key-list" class="list"></ul>
+        <form id="key-form" class="stack">
+          <label>Key name <input name="name" maxlength="80" placeholder="Vividora" required></label>
+          <button type="submit" class="ghost">Create API key</button>
+          <p id="key-error" class="error"></p>
+        </form>
+        <div id="key-new" class="hidden">
+          <p class="sub">Copy this key now. It is shown only once.</p>
+          <div class="copy-row"><input id="key-new-value" readonly><button data-copy="key-new-value" class="ghost">Copy</button></div>
+        </div>
+      </section>
+
       <section class="card" id="team-card">
         <h2>Team</h2>
         <ul id="user-list" class="list"></ul>

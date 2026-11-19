@@ -57,6 +57,25 @@ CREATE TABLE IF NOT EXISTS schedules (
   started_at INTEGER, ended_at INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS recordings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'recording' CHECK (status IN ('recording','done')),
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL DEFAULT (datetime('now')),
@@ -78,6 +97,7 @@ export function openDb(dir) {
   // Small migration: users.phone (WhatsApp alerts) was added after the first release.
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('record')) db.exec('ALTER TABLE users ADD COLUMN record INTEGER NOT NULL DEFAULT 0');
   return makeStore(db);
 }
 
@@ -105,6 +125,7 @@ function makeStore(db) {
     listUsers: () => q('SELECT id,email,name,role,active,phone,created_at FROM users ORDER BY id').all(),
     updateUser(id, f) {
       if (f.phone !== undefined) q('UPDATE users SET phone=? WHERE id=?').run(f.phone, id);
+      if (f.record !== undefined) q('UPDATE users SET record=? WHERE id=?').run(f.record ? 1 : 0, id);
       if (f.role !== undefined) q('UPDATE users SET role=? WHERE id=?').run(f.role, id);
       if (f.active !== undefined) q('UPDATE users SET active=? WHERE id=?').run(f.active ? 1 : 0, id);
       if (f.passwordHash !== undefined) q('UPDATE users SET password_hash=? WHERE id=?').run(f.passwordHash, id);
@@ -179,9 +200,10 @@ function makeStore(db) {
     },
     deleteVideo: (id) => q('DELETE FROM videos WHERE id = ?').run(id),
     // Unfinished uploads count at their full promised size so several big uploads cannot slip past the quota.
+    // Recordings of lives count too.
     storageUsed: (userId) => q(
       "SELECT COALESCE(SUM(CASE WHEN status = 'ready' THEN size ELSE expected_size END),0) AS n FROM videos WHERE user_id = ? AND status != 'failed'"
-    ).get(userId).n,
+    ).get(userId).n + q('SELECT COALESCE(SUM(size),0) AS n FROM recordings WHERE user_id = ?').get(userId).n,
     listStaleUploads: (olderThanSql) =>
       q("SELECT * FROM videos WHERE status IN ('uploading','failed') AND created_at < datetime('now', ?)").all(olderThanSql),
 
@@ -210,6 +232,40 @@ function makeStore(db) {
       return q("SELECT * FROM schedules WHERE status IN ('scheduled','running')").all()
         .map(parseSchedule).some((s) => s.video_ids.includes(videoId));
     },
+
+    // ---- API keys ----
+    createApiKey({ userId, name, tokenHash, prefix }) {
+      const r = q('INSERT INTO api_keys (user_id,name,token_hash,prefix) VALUES (?,?,?,?)').run(userId, name, tokenHash, prefix);
+      return Number(r.lastInsertRowid);
+    },
+    listApiKeys: (userId) => q('SELECT id,name,prefix,created_at,last_used_at FROM api_keys WHERE user_id = ? ORDER BY id').all(userId),
+    deleteApiKey: (id, userId) => q('DELETE FROM api_keys WHERE id = ? AND user_id = ?').run(id, userId).changes,
+    getUserByApiKeyHash(hash) {
+      const row = q(`SELECT u.*, k.id AS key_id, k.last_used_at AS key_last_used FROM api_keys k
+                     JOIN users u ON u.id = k.user_id WHERE k.token_hash = ? AND u.active = 1`).get(hash);
+      if (row && (!row.key_last_used || Date.now() - row.key_last_used > 60000)) {
+        q('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(Date.now(), row.key_id);
+      }
+      return row || null;
+    },
+
+    // ---- recordings ----
+    createRecording({ userId, title, filePath, startedAt }) {
+      const r = q('INSERT INTO recordings (user_id,title,file_path,started_at) VALUES (?,?,?,?)').run(userId, title, filePath, startedAt);
+      return Number(r.lastInsertRowid);
+    },
+    getRecording: (id) => q('SELECT * FROM recordings WHERE id = ?').get(id),
+    listRecordings: (userId) => (userId == null
+      ? q('SELECT * FROM recordings ORDER BY id DESC LIMIT 200').all()
+      : q('SELECT * FROM recordings WHERE user_id = ? ORDER BY id DESC LIMIT 200').all(userId)),
+    updateRecording(id, f) {
+      if (f.size !== undefined) q('UPDATE recordings SET size=? WHERE id=?').run(f.size, id);
+      if (f.status !== undefined) q('UPDATE recordings SET status=? WHERE id=?').run(f.status, id);
+      if (f.endedAt !== undefined) q('UPDATE recordings SET ended_at=? WHERE id=?').run(f.endedAt, id);
+    },
+    deleteRecording: (id) => q('DELETE FROM recordings WHERE id = ?').run(id),
+    listOpenRecordings: () => q("SELECT * FROM recordings WHERE status = 'recording'").all(),
+    listOldRecordings: (olderThanMs) => q("SELECT * FROM recordings WHERE status = 'done' AND ended_at < ?").all(olderThanMs),
 
     // ---- activity log ----
     addActivity(userId, action, detail = '') {

@@ -31,6 +31,10 @@ export function loadConfig(e = process.env) {
     lateStartMs: Number(e.LATE_START_MINUTES || 10) * 60000,
     schedulePollMs: Number(e.SCHEDULE_POLL_MS || 5000),
 
+    // recording of lives
+    recordingKeepDays: Number(e.RECORDING_KEEP_DAYS || 7),
+    recordingMaxHours: Number(e.RECORDING_MAX_HOURS || 6),
+
     // WhatsApp (or any HTTP) alerts - see README
     alertUrl: e.ALERT_WEBHOOK_URL || '',
     alertAuth: e.ALERT_WEBHOOK_AUTH || '',

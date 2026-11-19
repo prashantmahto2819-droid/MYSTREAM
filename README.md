@@ -4,7 +4,9 @@ Self-hosted multistream relay (Restream-style) for a small office team.
 
 - **Live:** OBS sends one stream in; the server forwards it to many YouTube / Facebook / Twitch / custom RTMP destinations.
 - **Recorded:** upload a video (2-5 GB is fine), schedule it for a time (IST), and it goes live on the chosen destinations by itself. Playlist, repeat, 24x7 loop. The file is deleted after the live.
-- **Alerts:** WhatsApp message when a live starts, ends, fails or is missed, and when a destination drops.
+- **Alerts:** WhatsApp message when a live starts, ends, fails or is missed, when OBS disconnects, when a destination drops or gets slow, and when the disk is filling up.
+- **Recordings:** optional copy of your OBS lives (kept 7 days), downloadable, or reusable as a video for a later schedule.
+- **Other software:** API keys + a ready client (`client/`, `docs/API.md`) so Vividora can upload a finished render and schedule it.
 
 Stack: [MediaMTX](https://github.com/bluenviron/mediamtx) (RTMP ingest), `ffmpeg -c copy` relays (no re-encoding, so 1080p/4K pass through and CPU stays low), zero-dependency Node.js 22 app (built-in `node:sqlite`), vanilla-JS dashboard.
 
@@ -18,7 +20,11 @@ Stack: [MediaMTX](https://github.com/bluenviron/mediamtx) (RTMP ingest), `ffmpeg
 | Videos | Resumable chunked upload (survives network drops, works through Cloudflare), storage quota and free-space checks, automatic check of every upload |
 | Preparation | Video is re-encoded **only if needed** (not H.264/AAC, keyframes too far apart, no audio track), one at a time |
 | Schedule | Date/time in your local time, playlist (same resolution/fps), repeat 1-50 or until stopped, pick destinations, auto-delete, cancel/stop, overlap protection, late-start protection |
-| Alerts | Generic webhook (works with Vivid Relay), per-user number + office numbers, cooldown so a flapping stream does not spam |
+| Live health | Bitrate and speed per destination in the dashboard; alert if a destination cannot keep up |
+| Alerts | Generic webhook (works with Vivid Relay), per-user number + office numbers, cooldown so a flapping stream does not spam; OBS started/dropped, slow destination, disk low |
+| Recordings | Per-user "Record my OBS lives" switch, Matroska copy (crash-safe), ranged download, "Use as video", auto-removed after `RECORDING_KEEP_DAYS` |
+| API | `Authorization: Bearer vs_...` keys (hashed in the database, revocable, limited powers) and `client/vivid-stream-client.mjs` with resumable upload |
+| Account | Change password (signs out other devices), API keys, WhatsApp number |
 | Safety | CSRF header, login rate limit, strict CSP, private/internal destination URLs rejected, MediaMTX connections authorised by the app |
 
 ## How it works
@@ -50,6 +56,12 @@ You need: the Hetzner server with Docker, your domain on Cloudflare, this code i
 3. `PUBLIC_RTMP_URL=rtmp://rtmp.vividbrandify.com/live`
 4. `ADMIN_EMAIL` and `ADMIN_PASSWORD`: your first login.
 
+### 2b. More disk with a Hetzner Volume (recommended, 2 minutes)
+The server has a 40 GB disk shared with Vivid Relay; 2-5 GB videos fill it quickly.
+1. https://console.hetzner.cloud/ → your server → **Volumes** → Create Volume: same location, 100 GB, ext4, **Automatic mount**.
+2. On the server: `df -h | grep HC_Volume` and note the path, e.g. `/mnt/HC_Volume_12345678`.
+3. `mkdir -p /mnt/HC_Volume_12345678/vivid-stream` and put `DATA_PATH=/mnt/HC_Volume_12345678/vivid-stream` in `.env`.
+
 ### 3. DNS (Cloudflare)
 1. Open https://dash.cloudflare.com/ → your domain → DNS → Records.
 2. Add an **A** record: name `rtmp`, value = the server IP, **Proxy status: DNS only (grey cloud)**. Cloudflare's proxy does not carry RTMP.
@@ -77,6 +89,9 @@ Uploads work through Cloudflare even on the free plan, because the browser sends
 ### 7. Team and alerts
 1. Dashboard → Team → add your 5-6 colleagues (they set their own WhatsApp number on their dashboard).
 2. WhatsApp alerts: in `.env` set `ALERT_WEBHOOK_URL` to the "send message" URL of Vivid Relay, `ALERT_WEBHOOK_AUTH` if it needs a token, and adjust `ALERT_BODY_TEMPLATE` so the JSON field names match what that endpoint expects. Add `ALERT_TO` for the office numbers that should get every alert. Then `docker compose up -d` again.
+
+### 7b. Vividora / other software (optional)
+Dashboard → Settings → **Create API key** (copied once). Then follow `docs/API.md`; the client does upload + schedule in three lines.
 
 ### 8. Test before the real event
 1. YouTube Studio → Create → Go live → **Stream** → copy Stream URL + key, set visibility **Unlisted** (https://studio.youtube.com/). Live must be enabled on the channel (up to 24 hours the first time).
@@ -107,6 +122,6 @@ Back up `./data` regularly (database + stored videos): `tar czf backup-$(date +%
 
 ## Roadmap
 
-1. Connect with Vividora: "Schedule live" button on a finished render, recording back into Vividora
-2. Recording of lives, bitrate/dropped-frame stats, standby slate, destination groups
+1. Vividora side: a "Schedule live" button that calls the client in `client/`
+2. Standby slate when OBS drops, destination groups, per-destination bitrate history
 3. Browser studio (scenes, overlays, guests) and OAuth "Connect YouTube/Facebook" buttons

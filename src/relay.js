@@ -4,7 +4,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 // so CPU use stays close to zero; resolution/bitrate are whatever OBS sends.
 export function buildArgs({ input, output }) {
   return [
-    '-hide_banner', '-loglevel', 'warning', '-nostdin',
+    '-hide_banner', '-loglevel', 'warning', '-nostdin', '-nostats', '-progress', 'pipe:1',
     '-i', input,
     '-c', 'copy',
     '-f', 'flv', '-flvflags', 'no_duration_filesize',
@@ -47,6 +47,7 @@ export class RelayManager {
     this.relays = new Map(); // destId -> entry
     this.liveKeys = new Set();
     this.filters = new Map(); // ingestKey -> Set<destId> (set while a scheduled video plays)
+    this.expectedDrops = new Set(); // keys whose stream is about to end on purpose (scheduled video finished)
     this.apiOk = null;
     this.timer = null;
     this.ticking = false;
@@ -91,7 +92,9 @@ export class RelayManager {
         this.apiOk = false;
         return;
       }
+      const prev = this.liveKeys;
       this.liveKeys = live;
+      this.detectIngestChanges(prev, live);
 
       const wanted = new Map(); // destId -> { dest, key }
       for (const key of live) {
@@ -142,9 +145,12 @@ export class RelayManager {
     const secrets = [streamKey, this.internalToken];
     const args = buildArgs({ input, output });
 
+    entry.stats = { bitrateKbps: null, speed: null, at: 0 };
+    entry.slowSince = 0;
+    entry.slowReported = false;
     let proc;
     try {
-      proc = this.spawn(this.cfg.ffmpegBin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      proc = this.spawn(this.cfg.ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       this.setStatus(entry, 'error', `Cannot start ffmpeg: ${e.message}`);
       this.scheduleRestart(entry, dest);
@@ -153,6 +159,23 @@ export class RelayManager {
     entry.proc = proc;
     entry.startedAt = Date.now();
     this.setStatus(entry, 'starting', null);
+
+    // ffmpeg -progress writes "key=value" lines; a block ends with "progress=continue".
+    let buf = '';
+    proc.stdout?.on('data', (chunk) => {
+      buf += chunk;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        const eq = line.indexOf('=');
+        if (eq < 0) continue;
+        const k = line.slice(0, eq); const v = line.slice(eq + 1);
+        if (k === 'bitrate' && v !== 'N/A') entry.stats.bitrateKbps = parseFloat(v) || 0;
+        else if (k === 'speed' && v !== 'N/A') entry.stats.speed = parseFloat(v) || 0;
+        else if (k === 'progress') { entry.stats.at = Date.now(); this.checkSlow(entry); }
+      }
+    });
 
     let lastLine = '';
     proc.stderr?.on('data', (chunk) => {
@@ -189,6 +212,18 @@ export class RelayManager {
     }, delay);
   }
 
+  /** If the destination cannot keep up (speed stays well below 1x) the viewers will see buffering. */
+  checkSlow(entry) {
+    const speed = entry.stats.speed;
+    if (speed === null || entry.status !== 'live') return;
+    if (speed >= 0.85) { entry.slowSince = 0; entry.slowReported = false; return; }
+    if (!entry.slowSince) { entry.slowSince = Date.now(); return; }
+    if (!entry.slowReported && Date.now() - entry.slowSince > (this.cfg.slowMs ?? 20000)) {
+      entry.slowReported = true;
+      this.onEvent({ type: 'slow', destId: entry.destId, userId: entry.userId, name: entry.name, detail: `${speed.toFixed(2)}x` });
+    }
+  }
+
   setStatus(entry, status, error) {
     const changed = entry.status !== status || (error && entry.lastError !== error);
     entry.status = status;
@@ -221,6 +256,28 @@ export class RelayManager {
     }
   }
 
+  detectIngestChanges(prev, live) {
+    for (const key of live) {
+      if (prev.has(key) || this.filters.has(key)) continue; // already known, or a scheduled video (has its own alert)
+      const user = this.store.getUserByIngestKey(key);
+      if (user?.active) {
+        this.onEvent({ type: 'ingest_started', userId: user.id, name: user.name, detail: String(this.store.listEnabledDestinations(user.id).length) });
+      }
+    }
+    for (const key of prev) {
+      if (live.has(key)) continue;
+      if (this.expectedDrops.delete(key) || this.filters.has(key)) continue;
+      const user = this.store.getUserByIngestKey(key);
+      if (user?.active) this.onEvent({ type: 'ingest_dropped', userId: user.id, name: user.name, detail: '' });
+    }
+  }
+
+  /** Called by the scheduler right before a scheduled video ends, so that is not reported as a dropped stream. */
+  noteExpectedDrop(ingestKey) {
+    this.expectedDrops.add(ingestKey);
+    setTimeout(() => this.expectedDrops.delete(ingestKey), 30000).unref?.();
+  }
+
   /** Restrict (Set of destination ids) or un-restrict (null) the relays for one ingest key. */
   setFilter(ingestKey, destIds) {
     if (destIds) this.filters.set(ingestKey, new Set(destIds));
@@ -233,8 +290,12 @@ export class RelayManager {
 
   statusFor(destId) {
     const e = this.relays.get(destId);
-    if (!e) return { status: 'idle', error: null, since: null, restarts: 0 };
-    return { status: e.status, error: e.lastError, since: e.since, restarts: e.restarts };
+    if (!e) return { status: 'idle', error: null, since: null, restarts: 0, stats: null };
+    const fresh = e.stats && Date.now() - e.stats.at < 15000;
+    return {
+      status: e.status, error: e.lastError, since: e.since, restarts: e.restarts,
+      stats: fresh ? { bitrateKbps: e.stats.bitrateKbps, speed: e.stats.speed } : null,
+    };
   }
 }
 

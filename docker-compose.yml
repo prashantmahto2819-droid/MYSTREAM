@@ -7,7 +7,8 @@ services:
       MEDIAMTX_API: http://mediamtx:9997
       MEDIAMTX_RTMP: rtmp://mediamtx:1935
     volumes:
-      - ./data:/data
+      # DATA_PATH can point to a Hetzner Volume, e.g. /mnt/HC_Volume_12345678/vivid-stream
+      - ${DATA_PATH:-./data}:/data
     # Dashboard on localhost only; put Caddy / Cloudflare Tunnel in front for HTTPS.
     ports:
       - "127.0.0.1:3000:3000"

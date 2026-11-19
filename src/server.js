@@ -6,12 +6,13 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
 import { openDb } from './db.js';
-import { makeVault, hashPassword, verifyPassword, randomToken, safeEqual } from './crypto.js';
+import { makeVault, hashPassword, verifyPassword, randomToken, safeEqual, sha256 } from './crypto.js';
 import { RelayManager } from './relay.js';
 import { VideoProcessor, VIDEO_EXTS } from './media.js';
 import { SchedulePlayer } from './player.js';
 import { Notifier } from './notify.js';
-import { relayEventHandler, playerEventHandler } from './alerts.js';
+import { Recorder } from './recorder.js';
+import { relayEventHandler, playerEventHandler, recorderEventHandler } from './alerts.js';
 import {
   PRESETS, cleanPlatform, validateRtmpUrl, validateStreamKey,
   validateName, validateEmail, validatePassword,
@@ -83,6 +84,8 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
   const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role });
 
   const needAdmin = (user) => { if (user.role !== 'admin') throw new HttpError(403, 'Admin only'); };
+  // API keys may not manage keys, passwords, stream keys or team members.
+  const needSession = (ctx) => { if (ctx.viaKey) throw new HttpError(403, 'Not allowed with an API key'); };
 
   const destView = (d) => ({
     id: d.id, name: d.name, platform: d.platform, rtmp_url: d.rtmp_url,
@@ -155,7 +158,9 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     });
   });
 
-  route('POST', '/api/me/rotate-ingest-key', async (_req, res, { user }) => {
+  route('POST', '/api/me/rotate-ingest-key', async (_req, res, ctx) => {
+    needSession(ctx);
+    const { user } = ctx;
     const key = store.rotateIngestKey(user.id);
     store.addActivity(user.id, 'ingest_key_rotated');
     send(res, 200, { key });
@@ -217,11 +222,115 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       if (p !== '' && !/^\+?\d{8,15}$/.test(p)) throw new HttpError(400, 'Enter the number with country code, e.g. 919876543210');
       store.updateUser(user.id, { phone: p });
     }
+    if (b.record !== undefined) {
+      store.updateUser(user.id, { record: !!b.record });
+      store.addActivity(user.id, b.record ? 'recording_enabled' : 'recording_disabled');
+    }
     send(res, 200, { ok: true });
   });
 
   route('GET', '/api/me/settings', async (_req, res, { user }) => {
-    send(res, 200, { phone: store.getUser(user.id).phone, alertsConfigured: !!cfg.alertUrl });
+    const u = store.getUser(user.id);
+    send(res, 200, { phone: u.phone, record: !!u.record, alertsConfigured: !!cfg.alertUrl, recordingKeepDays: cfg.recordingKeepDays });
+  });
+
+  // ---------- password + API keys (browser session only) ----------
+  route('POST', '/api/me/password', async (req, res, ctx) => {
+    needSession(ctx);
+    const { user } = ctx;
+    const b = await readJson(req);
+    const full = store.getUser(user.id);
+    if (!verifyPassword(String(b.current || ''), full.password_hash)) throw new HttpError(400, 'Current password is wrong');
+    const pw = validatePassword(b.new);
+    if (!pw.ok) throw new HttpError(400, pw.error);
+    store.updateUser(user.id, { passwordHash: hashPassword(pw.value) });
+    store.deleteUserSessions(user.id); // signs out every device, including this one
+    store.addActivity(user.id, 'password_changed');
+    const token = store.createSession(user.id, SESSION_TTL_MS);
+    send(res, 200, { ok: true }, { 'set-cookie': cookieHeader(req, token, SESSION_TTL_MS / 1000) });
+  });
+
+  route('GET', '/api/keys', async (_req, res, ctx) => {
+    needSession(ctx);
+    send(res, 200, { keys: store.listApiKeys(ctx.user.id) });
+  });
+
+  route('POST', '/api/keys', async (req, res, ctx) => {
+    needSession(ctx);
+    const { user } = ctx;
+    const name = validateName((await readJson(req)).name, 'Key name');
+    if (!name.ok) throw new HttpError(400, name.error);
+    if (store.listApiKeys(user.id).length >= 10) throw new HttpError(400, 'Limit reached (10 API keys)');
+    const token = `vs_${randomToken(20)}`;
+    store.createApiKey({ userId: user.id, name: name.value, tokenHash: sha256(token), prefix: token.slice(0, 7) });
+    store.addActivity(user.id, 'api_key_created', name.value);
+    send(res, 201, { token }); // shown once; only a hash is stored
+  });
+
+  route('DELETE', '/api/keys/:id', async (_req, res, ctx) => {
+    needSession(ctx);
+    const n = store.deleteApiKey(Number(ctx.params.id), ctx.user.id);
+    if (!n) throw new HttpError(404, 'Not found');
+    store.addActivity(ctx.user.id, 'api_key_deleted');
+    send(res, 200, { ok: true });
+  });
+
+  // ---------- recordings of lives ----------
+  const ownedRecording = (user, id) => {
+    const r = store.getRecording(Number(id));
+    if (!r || (r.user_id !== user.id && user.role !== 'admin')) throw new HttpError(404, 'Not found');
+    return r;
+  };
+  const recView = (r) => ({ id: r.id, title: r.title, size: r.size, status: r.status, started_at: r.started_at, ended_at: r.ended_at, user_id: r.user_id });
+
+  route('GET', '/api/recordings', async (_req, res, { user }) => {
+    send(res, 200, { recordings: store.listRecordings(user.role === 'admin' ? null : user.id).map(recView) });
+  });
+
+  route('GET', '/api/recordings/:id/download', async (req, res, { user, params }) => {
+    const r = ownedRecording(user, params.id);
+    if (r.status !== 'done' || !fs.existsSync(r.file_path)) throw new HttpError(409, 'Recording is not ready');
+    const total = fs.statSync(r.file_path).size;
+    const m = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
+    let start = 0; let end = total - 1; let status = 200;
+    if (m && (m[1] || m[2])) {
+      if (m[1]) { start = Number(m[1]); if (m[2]) end = Math.min(Number(m[2]), total - 1); } else { start = Math.max(0, total - Number(m[2])); }
+      if (start > end || start >= total) { res.writeHead(416, { 'content-range': `bytes */${total}` }); return res.end(); }
+      status = 206;
+    }
+    const headers = {
+      'content-type': 'video/x-matroska', 'content-length': end - start + 1, 'accept-ranges': 'bytes',
+      'content-disposition': `attachment; filename="recording-${r.id}.mkv"`, 'cache-control': 'no-store',
+    };
+    if (status === 206) headers['content-range'] = `bytes ${start}-${end}/${total}`;
+    res.writeHead(status, headers);
+    fs.createReadStream(r.file_path, { start, end }).pipe(res);
+  });
+
+  route('DELETE', '/api/recordings/:id', async (_req, res, { user, params }) => {
+    const r = ownedRecording(user, params.id);
+    if (r.status === 'recording') throw new HttpError(409, 'Still recording. Stop the live first.');
+    fs.rmSync(r.file_path, { force: true });
+    store.deleteRecording(r.id);
+    store.addActivity(user.id, 'recording_deleted', r.title);
+    send(res, 200, { ok: true });
+  });
+
+  // Turns a recording into a normal video that can be scheduled again.
+  route('POST', '/api/recordings/:id/to-video', async (_req, res, { user, params }) => {
+    const r = ownedRecording(user, params.id);
+    if (r.status !== 'done' || !fs.existsSync(r.file_path)) throw new HttpError(409, 'Recording is not ready');
+    const dir = path.join(cfg.dataDir, 'videos', String(r.user_id));
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${crypto.randomUUID()}.mkv`);
+    fs.renameSync(r.file_path, file);
+    const size = fs.statSync(file).size;
+    const id = store.createVideo({ userId: r.user_id, title: r.title, filePath: file, ext: 'mkv', expectedSize: size });
+    store.updateVideo(id, { status: 'processing', size });
+    store.deleteRecording(r.id);
+    store.addActivity(user.id, 'recording_to_video', r.title);
+    processor?.enqueue(id);
+    send(res, 200, { video_id: id });
   });
 
   // ---------- videos: resumable upload ----------
@@ -391,12 +500,16 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
   });
 
   // ---------- admin: team ----------
-  route('GET', '/api/users', async (_req, res, { user }) => {
+  route('GET', '/api/users', async (_req, res, ctx) => {
+    needSession(ctx);
+    const { user } = ctx;
     needAdmin(user);
     send(res, 200, { users: store.listUsers() });
   });
 
-  route('POST', '/api/users', async (req, res, { user }) => {
+  route('POST', '/api/users', async (req, res, ctx) => {
+    needSession(ctx);
+    const { user } = ctx;
     needAdmin(user);
     const b = await readJson(req);
     const email = validateEmail(b.email);
@@ -410,7 +523,9 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     send(res, 201, { id });
   });
 
-  route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
+  route('PATCH', '/api/users/:id', async (req, res, ctx) => {
+    needSession(ctx);
+    const { user, params } = ctx;
     needAdmin(user);
     const target = store.getUser(Number(params.id));
     if (!target) throw new HttpError(404, 'Not found');
@@ -460,16 +575,19 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       const m = r.re.exec(pathname);
       r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
 
-      // Custom header requirement blocks cross-site form posts (CSRF).
-      if (r.csrf !== false && req.method !== 'GET' && req.headers['x-requested-with'] !== 'vivid') {
+      // Programs (e.g. Vividora) authenticate with "Authorization: Bearer vs_..."; browsers use the cookie.
+      const authHeader = String(req.headers.authorization || '');
+      const viaKey = /^Bearer vs_[0-9a-f]{40}$/.test(authHeader);
+      // Cookie-authenticated writes need a custom header, which blocks cross-site form posts (CSRF).
+      if (r.csrf !== false && req.method !== 'GET' && !viaKey && req.headers['x-requested-with'] !== 'vivid') {
         throw new HttpError(403, 'Missing X-Requested-With header');
       }
       let user = null;
       if (r.auth !== false) {
-        user = store.getSessionUser(parseCookies(req).sid);
-        if (!user) throw new HttpError(401, 'Please log in');
+        user = viaKey ? store.getUserByApiKeyHash(sha256(authHeader.slice(7))) : store.getSessionUser(parseCookies(req).sid);
+        if (!user) throw new HttpError(401, viaKey ? 'Invalid API key' : 'Please log in');
       }
-      await r.handler(req, res, { user, params });
+      await r.handler(req, res, { user, params, viaKey });
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
       log.error('request failed', e);
@@ -509,15 +627,25 @@ async function main() {
   const player = new SchedulePlayer({
     store, cfg, relay, notifier, dataDir: cfg.dataDir, onEvent: playerEventHandler({ store, notifier }),
   });
+  const recorder = new Recorder({ store, cfg, relay, internalToken, onEvent: recorderEventHandler({ store }) });
   const server = createApp({ cfg, store, relay, internalToken, processor, player });
   server.listen(cfg.port, cfg.host, () => console.log(`vivid-stream listening on ${cfg.host}:${cfg.port}`));
   relay.start();
   player.start();
   processor.resume();
+  recorder.start();
 
   const housekeeping = () => {
     store.purgeSessions();
     store.trimActivity();
+    recorder.purgeOld();
+    try {
+      const st = fs.statfsSync(cfg.dataDir);
+      const free = Number(st.bavail) * Number(st.bsize);
+      if (free < cfg.diskReserveBytes * 1.5) {
+        notifier.send(null, `💾 सर्वर की डिस्क भर रही है: सिर्फ़ ${(free / 1024 ** 3).toFixed(1)} GB खाली. पुराने वीडियो/रिकॉर्डिंग हटाइए.`, { key: 'disk-low' }).catch(() => {});
+      }
+    } catch { /* statfs unavailable */ }
     // Unfinished uploads and failed files older than a day are removed to free disk space.
     for (const v of store.listStaleUploads('-1 day')) {
       fs.rmSync(v.file_path, { force: true });
@@ -530,6 +658,7 @@ async function main() {
   const shutdown = async () => {
     clearInterval(housekeepingTimer);
     player.shutdown();
+    recorder.shutdown();
     processor.shutdown();
     await relay.shutdown();
     server.close(() => process.exit(0));
