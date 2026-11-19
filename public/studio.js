@@ -49,36 +49,74 @@ function setScene(id) {
   for (const b of $('st-scenes').children) b.classList.toggle('on', b.dataset.id === id);
 }
 
+const dims = (v) => [v.videoWidth || v.width || 0, v.videoHeight || v.height || 0];
 function cover(ctx, v, x, y, w, h) {
-  const vw = v.videoWidth || w; const vh = v.videoHeight || h;
+  const [vw0, vh0] = dims(v); const vw = vw0 || w; const vh = vh0 || h;
   const s = Math.max(w / vw, h / vh); const dw = vw * s; const dh = vh * s;
   ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   ctx.drawImage(v, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh); ctx.restore();
 }
 function contain(ctx, v, w, h) {
-  const vw = v.videoWidth || w; const vh = v.videoHeight || h;
+  const [vw0, vh0] = dims(v); const vw = vw0 || w; const vh = vh0 || h;
   const s = Math.min(w / vw, h / vh);
   ctx.drawImage(v, (w - vw * s) / 2, (h - vh * s) / 2, vw * s, vh * s);
 }
 
+// ---- layout the user can drag on the preview ----
+const layout = { pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 } };
+let hits = []; let drag = null;
+const toCanvas = (e) => { const r = $('st-canvas').getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
+const hitAt = (x, y) => [...hits].reverse().find((h) => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+function drawPip(ctx, v) {
+  const { x, y, w } = layout.pip; const h = Math.round(w * 9 / 16);
+  cover(ctx, keyed(v), x, y, w, h);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
+  hits.push({ id: 'pip', x, y, w, h });
+}
+
+// ---- background + green screen (removes a green backdrop behind the person, no AI needed) ----
+const bg = { mode: 'black', color: '#1d2b64', img: null };
+const kc = document.createElement('canvas'); kc.width = 960; kc.height = 540; const kctx = kc.getContext('2d', { willReadFrequently: true });
+const keyedPip = document.createElement('canvas'); keyedPip.width = 960; keyedPip.height = 540;
+let lastKey = 0;
+function keyed(v) {
+  if (!$('st-key').checked || v !== st.camVideo || !v.videoWidth) return v;
+  const stamp = performance.now();
+  if (stamp - lastKey < 12) return kc; // already processed this frame
+  lastKey = stamp;
+  cover(kctx, v, 0, 0, 960, 540);
+  const img = kctx.getImageData(0, 0, 960, 540); const d = img.data;
+  const t1 = Number($('st-key-level').value); const t0 = t1 * 0.45;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i]; const g = d[i + 1]; const b = d[i + 2];
+    const m = r > b ? r : b; const diff = g - m;
+    if (diff > t1) d[i + 3] = 0;
+    else if (diff > t0) { d[i + 3] = (255 * (t1 - diff)) / (t1 - t0); d[i + 1] = m; } // soft edge + remove green spill
+  }
+  kctx.putImageData(img, 0, 0);
+  return kc;
+}
+function drawBackground(ctx) {
+  if (bg.mode === 'color') { ctx.fillStyle = bg.color; ctx.fillRect(0, 0, W, H); }
+  else if (bg.mode === 'image' && bg.img) cover(ctx, bg.img, 0, 0, W, H);
+  else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); }
+}
+
 function draw(now) {
   const c = $('st-canvas'); const ctx = c.getContext('2d');
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  hits = [];
+  drawBackground(ctx);
   const scene = st.scene;
-  if (scene === 'cam' && st.camVideo) cover(ctx, st.camVideo, 0, 0, W, H);
+  if (scene === 'cam' && st.camVideo) cover(ctx, keyed(st.camVideo), 0, 0, W, H);
   else if (scene === 'screen' && st.screenVideo) contain(ctx, st.screenVideo, W, H);
   else if (scene === 'pip' && st.screenVideo) {
     contain(ctx, st.screenVideo, W, H);
-    if (st.camVideo) {
-      const w = 320; const h = 180; const x = W - w - 24; const y = H - h - 24;
-      cover(ctx, st.camVideo, x, y, w, h);
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
-    }
+    if (st.camVideo) drawPip(ctx, st.camVideo);
   } else if (scene === 'guest' || scene === 'grid') {
     const gs = [...guests.values()].filter((g) => g.video && g.video.videoWidth);
     if (scene === 'guest' && gs.length) {
       cover(ctx, gs[0].video, 0, 0, W, H);
-      if (st.camVideo) { const w = 320; const h = 180; cover(ctx, st.camVideo, W - w - 24, H - h - 24, w, h); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(W - w - 24, H - h - 24, w, h); }
+      if (st.camVideo) drawPip(ctx, st.camVideo);
     } else {
       const tiles = [st.camVideo && { v: st.camVideo, n: '' }, ...gs.map((g) => ({ v: g.video, n: g.name }))].filter(Boolean);
       if (!tiles.length) { ctx.fillStyle = '#222'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#aaa'; ctx.textAlign = 'center'; ctx.font = '32px sans-serif'; ctx.fillText('Waiting for guests…', W / 2, H / 2); ctx.textAlign = 'left'; }
@@ -102,13 +140,18 @@ function draw(now) {
     ctx.fillText('Choose Camera or Share screen', W / 2, H / 2); ctx.textAlign = 'left';
   }
   // overlays (not on standby, which has its own text)
-  if (st.logo && scene !== 'standby') { const h = 90; const w = st.logo.width * (h / st.logo.height); ctx.drawImage(st.logo, W - w - 24, 24, w, h); }
+  if (st.logo && scene !== 'standby') {
+    const { x, y, h } = layout.logo; const w = st.logo.width * (h / st.logo.height);
+    ctx.drawImage(st.logo, x, y, w, h); hits.push({ id: 'logo', x, y, w, h });
+  }
   const lower = $('st-lower').value.trim();
   if (lower && scene !== 'standby') {
+    const { x, y } = layout.lower;
     ctx.font = 'bold 38px sans-serif'; const tw = Math.min(ctx.measureText(lower).width + 48, W - 120);
-    ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(40, H - 190, tw, 64);
-    ctx.fillStyle = '#ffcc00'; ctx.fillRect(40, H - 190, 8, 64);
-    ctx.fillStyle = '#fff'; ctx.fillText(lower, 64, H - 144, tw - 40);
+    ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(x, y, tw, 64);
+    ctx.fillStyle = '#ffcc00'; ctx.fillRect(x, y, 8, 64);
+    ctx.fillStyle = '#fff'; ctx.fillText(lower, x + 24, y + 46, tw - 40);
+    hits.push({ id: 'lower', x, y, w: tw, h: 64 });
   }
   const tick = $('st-ticker').value.trim();
   if (tick && scene !== 'standby') {
@@ -182,6 +225,39 @@ async function invite() {
     else if (m.type === 'error') say(m.message);
   };
   ws.onclose = () => { for (const id of [...guests.keys()]) dropGuest(id); if (hostWs === ws) hostWs = null; };
+}
+
+// ---- record from the studio (camera, screen, scenes, overlays) and keep it as a video to schedule later ----
+let local = null;
+function toggleRecord() {
+  if (local) { local.rec.stop(); return; }
+  if (!st.cam && !st.screen) return say('Turn on camera or share your screen first.');
+  const mime = pickMime(); if (!mime) return say('This browser cannot record video. Use Chrome or Edge.');
+  ensureAudio(); st.audioCtx.resume();
+  const stream = $('st-canvas').captureStream(30);
+  if (st.mixed.size) st.dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 128_000 });
+  const chunks = []; const t0 = Date.now();
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const timer = setInterval(() => {
+    const sec = Math.floor((Date.now() - t0) / 1000);
+    $('st-rec').textContent = `■ Stop and save (${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')})`;
+    if (sec > 90 * 60) rec.stop();
+  }, 500);
+  rec.onstop = () => {
+    clearInterval(timer); local = null; $('st-rec').textContent = '● Record';
+    if (!chunks.length) return;
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    const name = `Studio ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '-')}.webm`;
+    const file = new File([blob], name, { type: 'video/webm' });
+    say('Saving to Videos…');
+    window.dispatchEvent(new CustomEvent('vs-upload', { detail: { file,
+      onProgress: (p) => say(`Saving to Videos… ${Math.round(p * 100)}%`),
+      onDone: () => say('Saved. Find it under Videos & schedule (it is prepared there, then you can schedule it).'),
+      onError: (m) => say(`Could not save: ${m}`) } }));
+  };
+  rec.start(2000); local = { rec };
+  $('st-rec').textContent = '■ Stop and save (0:00)';
 }
 
 function pickMime() {
@@ -259,6 +335,32 @@ function init() {
   setScene('cam');
   $('st-cam').addEventListener('click', useCamera);
   $('st-screen').addEventListener('click', useScreen);
+  const cv = $('st-canvas');
+  cv.addEventListener('pointerdown', (e) => {
+    const [x, y] = toCanvas(e); const h = hitAt(x, y); if (!h) return;
+    const o = layout[h.id]; drag = { id: h.id, dx: x - o.x, dy: y - o.y, w: h.w, h: h.h };
+    cv.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  cv.addEventListener('pointermove', (e) => {
+    const [x, y] = toCanvas(e);
+    if (!drag) { cv.style.cursor = hitAt(x, y) ? 'move' : 'default'; return; }
+    const o = layout[drag.id];
+    o.x = Math.max(0, Math.min(W - drag.w, x - drag.dx)); o.y = Math.max(0, Math.min(H - drag.h, y - drag.dy));
+  });
+  for (const ev of ['pointerup', 'pointercancel']) cv.addEventListener(ev, () => { drag = null; });
+  $('st-pip-size').addEventListener('input', (e) => { layout.pip.w = Number(e.target.value); layout.pip.x = Math.min(layout.pip.x, W - layout.pip.w); });
+  $('st-logo-size').addEventListener('input', (e) => { layout.logo.h = Number(e.target.value); });
+  $('st-bg').addEventListener('change', (e) => {
+    bg.mode = e.target.value;
+    $('st-bg-color').classList.toggle('hidden', bg.mode !== 'color');
+    $('st-bg-file').classList.toggle('hidden', bg.mode !== 'image');
+  });
+  $('st-bg-color').addEventListener('input', (e) => { bg.color = e.target.value; });
+  $('st-bg-file').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const img = new Image(); img.onload = () => { bg.img = img; }; img.src = URL.createObjectURL(f);
+  });
+  $('st-rec').addEventListener('click', toggleRecord);
   $('st-start').addEventListener('click', goLive);
   $('st-invite').addEventListener('click', invite);
   $('st-stop').addEventListener('click', stopLive);

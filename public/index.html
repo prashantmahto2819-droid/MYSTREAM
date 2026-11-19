@@ -59,15 +59,24 @@
             <ul id="st-guests" class="list"></ul>
             <h3>Scene (switch any time)</h3>
             <div class="row" id="st-scenes"></div>
+            <h3>Look</h3>
+            <label>Background <select id="st-bg"><option value="black">Black</option><option value="color">Colour</option><option value="image">Image</option></select></label>
+            <input id="st-bg-color" type="color" value="#1d2b64" class="hidden">
+            <input id="st-bg-file" type="file" accept="image/png,image/jpeg,image/webp" class="hidden">
+            <label class="switch"><input type="checkbox" id="st-key"> Green screen: remove a green backdrop behind me</label>
+            <label>Green screen strength <input id="st-key-level" type="range" min="15" max="120" value="50"></label>
+            <label>Small camera size <input id="st-pip-size" type="range" min="200" max="640" value="320"></label>
+            <p class="sub">Drag the small camera, logo or name bar on the preview to move them. The background fills the screen behind a green-screen camera, in guest tiles it is hidden.</p>
             <h3>Overlays</h3>
             <label>Logo (image) <input id="st-logo" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <label>Logo size <input id="st-logo-size" type="range" min="40" max="240" value="90"></label>
             <label>Lower-third (name / title) <input id="st-lower" maxlength="80" placeholder="e.g. Prashant Mahto - Live"></label>
             <label>Scrolling ticker <input id="st-ticker" maxlength="200" placeholder="Breaking news text..."></label>
             <label>Standby text <input id="st-standby" maxlength="80" placeholder="We will be back shortly"></label>
             <h3>Send to</h3>
             <div id="st-dests" class="stack"></div>
             <label>Quality <select id="st-quality"><option value="720">720p (recommended)</option><option value="480">480p (slow internet)</option><option value="1080">1080p (strong computer + internet)</option></select></label>
-            <div class="row"><button id="st-start">Go live</button><button id="st-stop" class="danger hidden">Stop</button></div>
+            <div class="row"><button id="st-rec" class="ghost">● Record</button><button id="st-start">Go live</button><button id="st-stop" class="danger hidden">Stop</button></div>
           </div>
         </div>
       </section>

@@ -51,11 +51,12 @@ export function needsConvert(info) {
     info.acodec !== 'aac' || info.maxKeyGap > MAX_KEYFRAME_GAP;
 }
 
-export function convertArgs(input, output, hasAudio) {
+export function convertArgs(input, output, hasAudio, fps = 0) {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', input];
   if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo');
   args.push('-map', '0:v:0', '-map', hasAudio ? '0:a:0' : '1:a:0',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+    ...(fps ? ['-r', String(fps)] : []), // browser recordings have a variable frame rate
     '-force_key_frames', 'expr:gte(t,n_forced*2)',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000');
   if (!hasAudio) args.push('-shortest');
@@ -98,7 +99,7 @@ export class VideoProcessor {
       let info = await this.probe(this.cfg.ffprobeBin, v.file_path);
       if (needsConvert(info)) {
         const out = `${v.file_path}.conv.mp4`;
-        await this.convert(v.file_path, out, !!info.acodec);
+        await this.convert(v.file_path, out, !!info.acodec, ['vp8', 'vp9'].includes(info.vcodec) ? 30 : 0);
         const final = v.file_path.replace(/\.[^.]+$/, '') + '.mp4';
         fs.renameSync(out, final);
         if (final !== v.file_path) fs.rmSync(v.file_path, { force: true });
@@ -116,9 +117,9 @@ export class VideoProcessor {
     }
   }
 
-  convert(input, output, hasAudio) {
+  convert(input, output, hasAudio, fps = 0) {
     return new Promise((resolve, reject) => {
-      const p = this.spawn(this.cfg.ffmpegBin, convertArgs(input, output, hasAudio), { stdio: ['ignore', 'ignore', 'pipe'] });
+      const p = this.spawn(this.cfg.ffmpegBin, convertArgs(input, output, hasAudio, fps), { stdio: ['ignore', 'ignore', 'pipe'] });
       this.current = p;
       let err = '';
       p.stderr?.on('data', (c) => { err = (err + c).slice(-500); });

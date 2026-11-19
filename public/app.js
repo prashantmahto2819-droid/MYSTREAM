@@ -451,3 +451,9 @@ $('golive-form').addEventListener('submit', async (e) => {
     e.target.reset(); await refresh();
   } catch (err) { $('golive-note').textContent = err.message; }
 });
+
+// The browser studio hands finished recordings over here so they land in Videos like any upload.
+window.addEventListener('vs-upload', async (e) => {
+  const { file, onProgress, onDone, onError } = e.detail;
+  try { await uploadFile(file, onProgress); await refresh(); onDone(); } catch (err) { onError(err.message); }
+});

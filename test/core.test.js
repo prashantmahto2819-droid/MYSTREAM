@@ -69,3 +69,10 @@ test('relay helpers', () => {
   assert.equal(args.at(-1), 'rtmp://out/K');
   assert.equal(maskSecrets('error rtmp://out/SECRET123 failed', ['SECRET123']), 'error rtmp://out/*** failed');
 });
+
+test('convertArgs: fixed frame rate only when asked (browser recordings)', async () => {
+  const { convertArgs } = await import('../src/media.js');
+  assert.ok(!convertArgs('i', 'o', true).includes('-r'));
+  const a = convertArgs('i', 'o', true, 30);
+  assert.equal(a[a.indexOf('-r') + 1], '30');
+});
