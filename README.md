@@ -5,6 +5,7 @@ Self-hosted multistream relay (Restream-style) for a small office team.
 - **Live:** OBS sends one stream in; the server forwards it to many YouTube / Facebook / Twitch / custom RTMP destinations.
 - **Recorded:** upload a video (2-5 GB is fine), schedule it for a time (IST), and it goes live on the chosen destinations by itself. Playlist, repeat, 24x7 loop. The file is deleted after the live.
 - **Alerts:** WhatsApp message when a live starts, ends, fails or is missed, when OBS disconnects, when a destination drops or gets slow, and when the disk is filling up.
+- **Browser studio (no OBS):** go live from the dashboard with camera or screen share, scenes (camera / screen / screen + camera / standby), logo, lower-third, scrolling ticker, tick which destinations to send to, 480p/720p/1080p. Re-encodes on the server (about one CPU core at 720p).
 - **Recordings:** optional copy of your OBS lives (kept 7 days), downloadable, or reusable as a video for a later schedule.
 - **Other software:** API keys + a ready client (`client/`, `docs/API.md`) so Vividora can upload a finished render and schedule it.
 
@@ -120,8 +121,17 @@ Back up `./data` regularly (database + stored videos): `tar czf backup-$(date +%
 - Changing `APP_SECRET` makes saved stream keys unreadable.
 - Run the tests: `npm test` (Node 22.5+, needs ffmpeg for the media tests).
 
+## Updating a running server
+
+```
+cd /srv/vivid-stream && git pull
+docker compose up -d --build
+```
+
+If the app restarts with "unable to open database file", the data folder belongs to root: `chown -R 1000:1000 <DATA_PATH>`.
+
 ## Roadmap
 
 1. Vividora side: a "Schedule live" button that calls the client in `client/`
-2. Standby slate when OBS drops, destination groups, per-destination bitrate history
-3. Browser studio (scenes, overlays, guests) and OAuth "Connect YouTube/Facebook" buttons
+2. Auto standby slate when OBS drops, destination groups, per-destination bitrate history
+3. Guests in the browser studio and OAuth "Connect YouTube/Facebook" buttons

@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { attachStudio } from './studio.js';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
@@ -32,7 +33,7 @@ class HttpError extends Error {
 const MAX_CHUNK = 32 * 1024 * 1024;
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
-export function createApp({ cfg, store, relay, internalToken, processor, player, log = console }) {
+export function createApp({ cfg, store, relay, internalToken, processor, player, log = console, spawn }) {
   const vault = relay.vault;
   const loginFails = new Map(); // "ip|email" -> { n, until }
 
@@ -563,7 +564,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('x-frame-options', 'DENY');
     res.setHeader('referrer-policy', 'no-referrer');
-    res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'");
+    res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'");
     try {
       const pathname = new URL(req.url, 'http://x').pathname;
       if ((req.method === 'GET' || req.method === 'HEAD') && !pathname.startsWith('/api/') && !pathname.startsWith('/internal/') && pathname !== '/healthz') {
@@ -595,6 +596,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     }
   });
 
+  server.studio = attachStudio(server, { store, relay, cfg, spawn, parseCookies, log });
   return server;
 }
 
@@ -657,6 +659,7 @@ async function main() {
   const housekeepingTimer = setInterval(housekeeping, 3600 * 1000);
   const shutdown = async () => {
     clearInterval(housekeepingTimer);
+    server.studio?.stopAll();
     player.shutdown();
     recorder.shutdown();
     processor.shutdown();

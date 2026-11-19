@@ -26,6 +26,32 @@
     </header>
 
     <main class="grid">
+      <section class="card wide" id="studio-card">
+        <h2>Go live from your browser</h2>
+        <p class="muted">No OBS needed: camera or screen, scenes and overlays, straight to your destinations. Best on a laptop with Chrome or Edge.</p>
+        <div class="studio">
+          <div>
+            <canvas id="st-canvas" width="1280" height="720"></canvas>
+            <p><span id="st-badge" class="badge">Off</span> <span id="st-msg" class="sub"></span></p>
+          </div>
+          <div class="stack">
+            <h3>Sources</h3>
+            <div class="row"><button id="st-cam" class="ghost">Camera + mic</button><button id="st-screen" class="ghost">Share screen</button></div>
+            <h3>Scene (switch any time)</h3>
+            <div class="row" id="st-scenes"></div>
+            <h3>Overlays</h3>
+            <label>Logo (image) <input id="st-logo" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <label>Lower-third (name / title) <input id="st-lower" maxlength="80" placeholder="e.g. Prashant Mahto - Live"></label>
+            <label>Scrolling ticker <input id="st-ticker" maxlength="200" placeholder="Breaking news text..."></label>
+            <label>Standby text <input id="st-standby" maxlength="80" placeholder="We will be back shortly"></label>
+            <h3>Send to</h3>
+            <div id="st-dests" class="stack"></div>
+            <label>Quality <select id="st-quality"><option value="720">720p (recommended)</option><option value="480">480p (slow internet)</option><option value="1080">1080p (strong computer + internet)</option></select></label>
+            <div class="row"><button id="st-start">Go live</button><button id="st-stop" class="danger hidden">Stop</button></div>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <h2>1. Send your stream here (OBS)</h2>
         <p class="muted">In OBS: Settings &rarr; Stream &rarr; Service: Custom.</p>
@@ -139,5 +165,6 @@
     </main>
   </div>
   <script src="/app.js" type="module"></script>
+  <script src="/studio.js" type="module"></script>
 </body>
 </html>
