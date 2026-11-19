@@ -16,6 +16,7 @@ import { Notifier } from './notify.js';
 import { Recorder } from './recorder.js';
 import { relayEventHandler, playerEventHandler, recorderEventHandler, standbyEventHandler } from './alerts.js';
 import { Standby } from './standby.js';
+import { makeOAuth, OAuthError } from './oauth.js';
 import {
   PRESETS, cleanPlatform, validateRtmpUrl, validateStreamKey,
   validateName, validateEmail, validatePassword,
@@ -35,7 +36,7 @@ class HttpError extends Error {
 const MAX_CHUNK = 32 * 1024 * 1024;
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
-export function createApp({ cfg, store, relay, internalToken, processor, player, log = console, spawn, standby = null }) {
+export function createApp({ cfg, store, relay, internalToken, processor, player, log = console, spawn, standby = null, oauth = null }) {
   const vault = relay.vault;
   const loginFails = new Map(); // "ip|email" -> { n, until }
 
@@ -238,6 +239,63 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       store.addActivity(user.id, b.record ? 'recording_enabled' : 'recording_disabled');
     }
     send(res, 200, { ok: true });
+  });
+
+  // ---------- connected YouTube / Facebook accounts ----------
+  const needOAuth = () => { if (!oauth) throw new HttpError(400, 'Not available'); };
+  const oauthError = (e) => { if (e instanceof OAuthError) throw new HttpError(400, e.message); throw e; };
+  route('GET', '/api/connections', async (_req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    send(res, 200, { configured: oauth.configured(), connections: store.listConnections(ctx.user.id) });
+  });
+  route('GET', '/api/oauth/:provider/start', async (_req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    if (!['google', 'facebook'].includes(ctx.params.provider)) throw new HttpError(404, 'Not found');
+    let url; try { url = oauth.authUrl(ctx.params.provider, ctx.user.id); } catch (e) { oauthError(e); }
+    res.writeHead(302, { location: url, 'cache-control': 'no-store' }); res.end();
+  });
+  route('GET', '/api/oauth/:provider/callback', async (req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    if (!['google', 'facebook'].includes(ctx.params.provider)) throw new HttpError(404, 'Not found');
+    const q = new URL(req.url, 'http://x').searchParams;
+    let where;
+    try {
+      const ids = await oauth.handleCallback(ctx.params.provider, { code: q.get('code'), state: q.get('state'), error: q.get('error') }, ctx.user.id);
+      store.addActivity(ctx.user.id, 'account_connected', ctx.params.provider);
+      where = `/?connected=${ids.length}#destinations`;
+    } catch (e) {
+      if (!(e instanceof OAuthError)) throw e;
+      where = `/?oauth_error=${encodeURIComponent(e.message)}#destinations`;
+    }
+    res.writeHead(302, { location: where, 'cache-control': 'no-store' }); res.end();
+  });
+  route('DELETE', '/api/connections/:id', async (_req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    const c = store.getConnection(Number(ctx.params.id));
+    if (!c || c.user_id !== ctx.user.id) throw new HttpError(404, 'Not found');
+    store.deleteConnection(c.id);
+    send(res, 200, { ok: true });
+  });
+  route('POST', '/api/connections/:id/go-live', async (req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    const { user } = ctx;
+    const c = store.getConnection(Number(ctx.params.id));
+    if (!c || c.user_id !== user.id) throw new HttpError(404, 'Not found');
+    const b = await readJson(req);
+    const title = validateName(b.title, 'Title');
+    if (!title.ok) throw new HttpError(400, title.error);
+    if (store.countDestinations(user.id) >= cfg.maxDestinationsPerUser) throw new HttpError(400, `Limit reached (${cfg.maxDestinationsPerUser} destinations)`);
+    const privacy = ['public', 'unlisted', 'private'].includes(b.privacy) ? b.privacy : 'unlisted';
+    const startAt = b.start_at ? Number(b.start_at) : null;
+    if (startAt !== null && (!Number.isFinite(startAt) || startAt < Date.now() - 60000)) throw new HttpError(400, 'Start time must be in the future');
+    let made;
+    try { made = await oauth.create(c, { title: title.value, privacy, startAt, description: String(b.description || '').slice(0, 2000) }); } catch (e) { oauthError(e); }
+    const url = validateRtmpUrl(made.rtmpUrl);
+    const key = validateStreamKey(made.streamKey);
+    if (!url.ok || !key.ok) throw new HttpError(502, 'The platform returned an unusable stream address.');
+    const id = store.createDestination({ userId: user.id, name: made.name.slice(0, 80), platform: cleanPlatform(made.platform), rtmpUrl: url.url, keyEnc: vault.encrypt(key.key) });
+    store.addActivity(user.id, 'live_created', `${made.name}`);
+    send(res, 201, { destination: destView(store.getDestination(id)), watch_url: made.watchUrl });
   });
 
   let guestsApi = null;
@@ -663,7 +721,7 @@ async function main() {
     store, cfg, relay, notifier, dataDir: cfg.dataDir, onEvent: playerEventHandler({ store, notifier }),
   });
   const recorder = new Recorder({ store, cfg, relay, internalToken, onEvent: recorderEventHandler({ store }) });
-  const server = createApp({ cfg, store, relay, internalToken, processor, player, standby });
+  const server = createApp({ cfg, store, relay, internalToken, processor, player, standby, oauth: makeOAuth({ cfg, store, vault }) });
   server.listen(cfg.port, cfg.host, () => console.log(`vivid-stream listening on ${cfg.host}:${cfg.port}`));
   relay.start();
   player.start();

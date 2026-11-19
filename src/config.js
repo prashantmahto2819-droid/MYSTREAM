@@ -31,6 +31,13 @@ export function loadConfig(e = process.env) {
     lateStartMs: Number(e.LATE_START_MINUTES || 10) * 60000,
     schedulePollMs: Number(e.SCHEDULE_POLL_MS || 5000),
 
+    // "Connect YouTube / Facebook" (optional). PUBLIC_BASE_URL is the https address of the dashboard.
+    publicBaseUrl: (e.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
+    googleClientId: e.GOOGLE_CLIENT_ID || '',
+    googleClientSecret: e.GOOGLE_CLIENT_SECRET || '',
+    facebookAppId: e.FACEBOOK_APP_ID || '',
+    facebookAppSecret: e.FACEBOOK_APP_SECRET || '',
+
     // recording of lives
     recordingKeepDays: Number(e.RECORDING_KEEP_DAYS || 7),
     recordingMaxHours: Number(e.RECORDING_MAX_HOURS || 6),

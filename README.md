@@ -6,6 +6,9 @@ Self-hosted multistream relay (Restream-style) for a small office team.
 - **Recorded:** upload a video (2-5 GB is fine), schedule it for a time (IST), and it goes live on the chosen destinations by itself. Playlist, repeat, 24x7 loop. The file is deleted after the live.
 - **Alerts:** WhatsApp message when a live starts, ends, fails or is missed, when OBS disconnects, when a destination drops or gets slow, and when the disk is filling up.
 - **Browser studio (no OBS):** go live from the dashboard with camera or screen share, scenes (camera / screen / screen + camera / standby), logo, lower-third, scrolling ticker, tick which destinations to send to, 480p/720p/1080p. Re-encodes on the server (about one CPU core at 720p).
+- **Connect YouTube / Facebook:** one-click "Create live" that creates the broadcast and adds the destination with its key.
+- **Standby screen:** if OBS drops, a standby slate keeps YouTube/Facebook connected for a few minutes (opt-in).
+- **Guests:** invite link; guests join from their browser and appear in your scenes.
 - **Recordings:** optional copy of your OBS lives (kept 7 days), downloadable, or reusable as a video for a later schedule.
 - **Other software:** API keys + a ready client (`client/`, `docs/API.md`) so Vividora can upload a finished render and schedule it.
 
@@ -121,6 +124,29 @@ Back up `./data` regularly (database + stored videos): `tar czf backup-$(date +%
 - Changing `APP_SECRET` makes saved stream keys unreadable.
 - Run the tests: `npm test` (Node 22.5+, needs ffmpeg for the media tests).
 
+## Connect YouTube / Facebook (optional)
+
+This lets you press "Create live" in the dashboard and get the stream key made for you. Without it everything else works; you just paste keys by hand.
+
+Set in `.env`: `PUBLIC_BASE_URL=https://live.vividbrandify.com`, then the keys below, then `docker compose up -d`.
+
+**YouTube (Google)**
+1. https://console.cloud.google.com/projectcreate - create a project.
+2. https://console.cloud.google.com/apis/library/youtube.googleapis.com - **Enable** "YouTube Data API v3".
+3. https://console.cloud.google.com/auth/overview - set up the consent screen (External). Add your Google email under **Audience -> Test users**, then press **Publish app** (otherwise tokens stop after 7 days; the "unverified app" warning on sign-in is normal for your own team).
+4. https://console.cloud.google.com/auth/clients - **Create client -> Web application**. Authorised redirect URI: `https://live.vividbrandify.com/api/oauth/google/callback`.
+5. Put the Client ID and secret in `.env` as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+6. The YouTube channel must be enabled for live streaming (https://www.youtube.com/features, up to 24 hours the first time).
+
+**Facebook Pages**
+1. https://developers.facebook.com/apps - **Create app** (type Business).
+2. Add the product **Facebook Login for Business** (or Facebook Login) and set Valid OAuth Redirect URI: `https://live.vividbrandify.com/api/oauth/facebook/callback`.
+3. Put App ID and App Secret in `.env` as `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET`.
+4. While the app is in Development mode only people added under App roles can connect, which is enough for your office. Going public needs Facebook app review. Only Pages can be created this way, not personal profiles.
+
+Then in the dashboard: **Destinations -> Connect YouTube** (or Facebook Page), sign in, press **Create live**.
+YouTube lives made this way start automatically when video arrives and end when you stop.
+
 ## Updating a running server
 
 ```
@@ -132,6 +158,6 @@ If the app restarts with "unable to open database file", the data folder belongs
 
 ## Roadmap
 
-1. Vividora side: a "Schedule live" button that calls the client in `client/`
-2. Auto standby slate when OBS drops, destination groups, per-destination bitrate history
-3. Guests in the browser studio and OAuth "Connect YouTube/Facebook" buttons
+1. Vividora side: the "Schedule Live" button (how: docs/VIVIDORA.md)
+2. Destination groups, per-destination bitrate history
+3. Guest return video, Instagram and X destinations

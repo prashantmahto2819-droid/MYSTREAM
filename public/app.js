@@ -47,6 +47,7 @@ async function showApp() {
   $('sched-start').value = defaultStart();
   await loadSettings();
   await refresh();
+  loadConnections().catch(() => {});
   clearInterval(pollTimer);
   pollTimer = setInterval(() => refresh().catch(() => {}), 3000);
 }
@@ -419,3 +420,34 @@ document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('clic
 (async () => {
   try { me = (await api('GET', '/api/me')).user; await showApp(); } catch { showLogin(); }
 })();
+
+// ---------- connected accounts (YouTube / Facebook) ----------
+let goLiveFor = null;
+async function loadConnections() {
+  const { configured, connections } = await api('GET', '/api/connections');
+  $('connect-google').classList.toggle('hidden', !configured.google);
+  $('connect-facebook').classList.toggle('hidden', !configured.facebook);
+  $('connect-off').classList.toggle('hidden', configured.google || configured.facebook);
+  const label = { google: 'YouTube', facebook: 'Facebook Page' };
+  $('conn-list').replaceChildren(...connections.map((c) => el('li', {},
+    el('div', { class: 'grow' }, c.account_name, el('div', { class: 'sub' }, label[c.provider])),
+    el('button', { onclick: () => { goLiveFor = c; $('golive-for').textContent = `New live on ${c.account_name}`; $('golive-note').textContent = ''; $('golive-form').classList.remove('hidden'); } }, 'Create live'),
+    el('button', { class: 'danger', onclick: async () => {
+      if (!confirm(`Disconnect ${c.account_name}?`)) return;
+      try { await api('DELETE', `/api/connections/${c.id}`); await loadConnections(); } catch (err) { alert(err.message); }
+    } }, 'Disconnect'))));
+  const q = new URLSearchParams(location.search);
+  if (q.get('connected')) $('connect-msg').textContent = `Connected (${q.get('connected')}).`;
+  if (q.get('oauth_error')) $('connect-msg').textContent = q.get('oauth_error');
+}
+$('golive-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!goLiveFor) return;
+  const f = new FormData(e.target);
+  $('golive-note').textContent = 'Creating…';
+  try {
+    const r = await api('POST', `/api/connections/${goLiveFor.id}/go-live`, { title: f.get('title'), privacy: f.get('privacy') });
+    $('golive-note').textContent = `Done. Destination added. Start streaming (browser studio or OBS). Watch link: ${r.watch_url}`;
+    e.target.reset(); await refresh();
+  } catch (err) { $('golive-note').textContent = err.message; }
+});

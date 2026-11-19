@@ -86,6 +86,22 @@
         </form>
       </section>
 
+      <section class="card" data-tab="destinations" id="connect-card">
+        <h2>Connect YouTube / Facebook</h2>
+        <p class="muted">Sign in once. Then create a live with one click: the stream key is made and added automatically.</p>
+        <p id="connect-msg" class="sub"></p>
+        <div class="row"><a id="connect-google" class="btnlink hidden" href="/api/oauth/google/start">Connect YouTube</a><a id="connect-facebook" class="btnlink hidden" href="/api/oauth/facebook/start">Connect Facebook Page</a></div>
+        <p id="connect-off" class="sub hidden">Not set up on the server yet. See "Connect YouTube / Facebook" in the README.</p>
+        <ul id="conn-list" class="list"></ul>
+        <form id="golive-form" class="stack hidden">
+          <h3 id="golive-for"></h3>
+          <label>Title <input name="title" maxlength="80" required placeholder="Today's live"></label>
+          <label>Visibility <select name="privacy"><option value="unlisted">Unlisted</option><option value="public">Public</option><option value="private">Private</option></select></label>
+          <button type="submit">Create live and add destination</button>
+          <p id="golive-note" class="sub"></p>
+        </form>
+      </section>
+
       <section class="card" data-tab="destinations">
         <h2>Destinations</h2>
         <ul id="dest-list" class="list"></ul>

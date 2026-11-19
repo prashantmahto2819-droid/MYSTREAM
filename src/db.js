@@ -101,6 +101,16 @@ export function openDb(dir) {
   if (!cols.includes('standby')) db.exec('ALTER TABLE users ADD COLUMN standby INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('standby_text')) db.exec("ALTER TABLE users ADD COLUMN standby_text TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('standby_minutes')) db.exec('ALTER TABLE users ADD COLUMN standby_minutes INTEGER NOT NULL DEFAULT 10');
+  db.exec(`CREATE TABLE IF NOT EXISTS connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK (provider IN ('google','facebook')),
+    remote_id TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    token_enc TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+    UNIQUE (user_id, provider, remote_id)
+  )`);
   return makeStore(db);
 }
 
@@ -254,6 +264,17 @@ function makeStore(db) {
       }
       return row || null;
     },
+
+    // ---- connected accounts (YouTube / Facebook pages) ----
+    upsertConnection({ userId, provider, remoteId, accountName, tokenEnc }) {
+      const old = q('SELECT id FROM connections WHERE user_id=? AND provider=? AND remote_id=?').get(userId, provider, remoteId);
+      if (old) { q('UPDATE connections SET account_name=?, token_enc=? WHERE id=?').run(accountName, tokenEnc, old.id); return old.id; }
+      return Number(q('INSERT INTO connections (user_id,provider,remote_id,account_name,token_enc) VALUES (?,?,?,?,?)').run(userId, provider, remoteId, accountName, tokenEnc).lastInsertRowid);
+    },
+    listConnections: (userId) => q('SELECT id,user_id,provider,remote_id,account_name,created_at FROM connections WHERE user_id = ? ORDER BY id').all(userId),
+    getConnection: (id) => q('SELECT * FROM connections WHERE id = ?').get(id),
+    updateConnectionToken: (id, tokenEnc) => q('UPDATE connections SET token_enc=? WHERE id=?').run(tokenEnc, id),
+    deleteConnection: (id) => q('DELETE FROM connections WHERE id = ?').run(id),
 
     // ---- recordings ----
     createRecording({ userId, title, filePath, startedAt }) {
