@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { attachStudio } from './studio.js';
+import { attachGuests } from './guests.js';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig } from './config.js';
@@ -13,7 +14,8 @@ import { VideoProcessor, VIDEO_EXTS } from './media.js';
 import { SchedulePlayer } from './player.js';
 import { Notifier } from './notify.js';
 import { Recorder } from './recorder.js';
-import { relayEventHandler, playerEventHandler, recorderEventHandler } from './alerts.js';
+import { relayEventHandler, playerEventHandler, recorderEventHandler, standbyEventHandler } from './alerts.js';
+import { Standby } from './standby.js';
 import {
   PRESETS, cleanPlatform, validateRtmpUrl, validateStreamKey,
   validateName, validateEmail, validatePassword,
@@ -33,7 +35,7 @@ class HttpError extends Error {
 const MAX_CHUNK = 32 * 1024 * 1024;
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
-export function createApp({ cfg, store, relay, internalToken, processor, player, log = console, spawn }) {
+export function createApp({ cfg, store, relay, internalToken, processor, player, log = console, spawn, standby = null }) {
   const vault = relay.vault;
   const loginFails = new Map(); // "ip|email" -> { n, until }
 
@@ -155,6 +157,7 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     send(res, 200, {
       ingest: { url: cfg.publicRtmpUrl, key: user.ingest_key, live: relay.isIngestLive(user.ingest_key) },
       mediamtxOk: relay.apiOk,
+      standby: { active: !!standby?.isActive(user.id), since: standby?.since(user.id) || null },
       destinations: dests,
     });
   });
@@ -223,6 +226,13 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
       if (p !== '' && !/^\+?\d{8,15}$/.test(p)) throw new HttpError(400, 'Enter the number with country code, e.g. 919876543210');
       store.updateUser(user.id, { phone: p });
     }
+    if (b.standby !== undefined) store.updateUser(user.id, { standby: !!b.standby });
+    if (b.standby_text !== undefined) store.updateUser(user.id, { standbyText: String(b.standby_text).trim().slice(0, 80) });
+    if (b.standby_minutes !== undefined) {
+      const n = Number(b.standby_minutes);
+      if (!Number.isInteger(n) || n < 1 || n > 60) throw new HttpError(400, 'Standby minutes must be 1 to 60');
+      store.updateUser(user.id, { standbyMinutes: n });
+    }
     if (b.record !== undefined) {
       store.updateUser(user.id, { record: !!b.record });
       store.addActivity(user.id, b.record ? 'recording_enabled' : 'recording_disabled');
@@ -230,9 +240,25 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     send(res, 200, { ok: true });
   });
 
+  let guestsApi = null;
+  route('POST', '/api/studio/invite', async (_req, res, ctx) => {
+    needSession(ctx);
+    const { token } = guestsApi.createInvite(ctx.user.id);
+    send(res, 200, { token, url: `/join.html#${token}` });
+  });
+  route('DELETE', '/api/studio/invite', async (_req, res, ctx) => {
+    needSession(ctx);
+    guestsApi.revokeInvite(ctx.user.id);
+    send(res, 200, { ok: true });
+  });
+
+  route('POST', '/api/standby/stop', async (_req, res, { user }) => {
+    send(res, 200, { ok: true, stopped: !!standby?.stop(user.id) });
+  });
+
   route('GET', '/api/me/settings', async (_req, res, { user }) => {
     const u = store.getUser(user.id);
-    send(res, 200, { phone: u.phone, record: !!u.record, alertsConfigured: !!cfg.alertUrl, recordingKeepDays: cfg.recordingKeepDays });
+    send(res, 200, { phone: u.phone, record: !!u.record, standby: !!u.standby, standby_text: u.standby_text, standby_minutes: u.standby_minutes, alertsConfigured: !!cfg.alertUrl, recordingKeepDays: cfg.recordingKeepDays });
   });
 
   // ---------- password + API keys (browser session only) ----------
@@ -597,6 +623,10 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
   });
 
   server.studio = attachStudio(server, { store, relay, cfg, spawn, parseCookies, log });
+  guestsApi = server.guests = attachGuests(server, { store, parseCookies, log });
+  server.on('upgrade', (req, socket) => { // nobody claimed it
+    if (!req.wsHandled) { socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); socket.destroy(); }
+  });
   return server;
 }
 
@@ -622,15 +652,18 @@ async function main() {
   seedAdmin(store, cfg);
 
   const notifier = new Notifier({ cfg, store });
+  let standby = null;
+  const relayEvents = relayEventHandler({ store, notifier });
   const relay = new RelayManager({
-    store, vault, cfg, internalToken, onEvent: relayEventHandler({ store, notifier }),
+    store, vault, cfg, internalToken, onEvent: (ev) => { relayEvents(ev); standby?.handle(ev); },
   });
+  standby = new Standby({ store, relay, cfg, dataDir: cfg.dataDir, onEvent: standbyEventHandler({ store, notifier }) });
   const processor = new VideoProcessor({ store, cfg });
   const player = new SchedulePlayer({
     store, cfg, relay, notifier, dataDir: cfg.dataDir, onEvent: playerEventHandler({ store, notifier }),
   });
   const recorder = new Recorder({ store, cfg, relay, internalToken, onEvent: recorderEventHandler({ store }) });
-  const server = createApp({ cfg, store, relay, internalToken, processor, player });
+  const server = createApp({ cfg, store, relay, internalToken, processor, player, standby });
   server.listen(cfg.port, cfg.host, () => console.log(`vivid-stream listening on ${cfg.host}:${cfg.port}`));
   relay.start();
   player.start();
@@ -660,6 +693,7 @@ async function main() {
   const shutdown = async () => {
     clearInterval(housekeepingTimer);
     server.studio?.stopAll();
+    standby.shutdown();
     player.shutdown();
     recorder.shutdown();
     processor.shutdown();

@@ -34,6 +34,11 @@
     </header>
 
     <main class="grid">
+      <section class="card wide hidden" id="standby-banner" data-tab="studio">
+        <strong>Standby screen is live.</strong> <span class="muted">OBS is disconnected. Reconnect OBS and it takes over, or stop here.</span>
+        <button id="standby-stop" class="danger">Stop standby (end live)</button>
+      </section>
+
       <section class="card wide" id="studio-card" data-tab="studio">
         <h2>Go live from your browser</h2>
         <p class="muted">No OBS needed: camera or screen, scenes and overlays, straight to your destinations. Best on a laptop with Chrome or Edge.</p>
@@ -45,6 +50,13 @@
           <div class="stack">
             <h3>Sources</h3>
             <div class="row"><button id="st-cam" class="ghost">Camera + mic</button><button id="st-screen" class="ghost">Share screen</button></div>
+            <h3>Guests</h3>
+            <div class="row"><button id="st-invite" class="ghost">Invite a guest</button></div>
+            <div id="st-invite-box" class="stack hidden">
+              <div class="copy-row"><input id="st-invite-link" readonly><button data-copy="st-invite-link" class="ghost">Copy</button></div>
+              <p class="sub">Send this link. The guest opens it, allows camera and mic, and appears here. Up to 3 guests. Link works while this page is open (6 hours).</p>
+            </div>
+            <ul id="st-guests" class="list"></ul>
             <h3>Scene (switch any time)</h3>
             <div class="row" id="st-scenes"></div>
             <h3>Overlays</h3>
@@ -132,6 +144,13 @@
       <section class="card" data-tab="settings">
         <h2>Settings</h2>
         <label class="switch"><input type="checkbox" id="record-toggle"> Record my OBS lives <span id="record-note" class="sub"></span></label>
+        <div class="stack">
+          <label class="switch"><input type="checkbox" id="standby-toggle"> If OBS drops, show a standby screen (keeps YouTube/Facebook live)</label>
+          <label>Standby text (English letters work best) <input id="standby-text" maxlength="80" placeholder="We will be back shortly"></label>
+          <label>Stop after (minutes) <input id="standby-minutes" type="number" min="1" max="60" value="10"></label>
+          <button id="standby-save" class="ghost">Save standby settings</button>
+          <p class="sub">Turn this off before you end a stream on purpose in OBS, otherwise the standby screen keeps running until the time is up. You can also press Stop standby on the Go live tab.</p>
+        </div>
         <form id="pw-form" class="stack">
           <h3>Change password</h3>
           <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>

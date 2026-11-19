@@ -2,7 +2,9 @@
 // the chunks over a WebSocket to the server, which turns them into RTMP (see src/studio.js).
 const $ = (id) => document.getElementById(id);
 const W = 1280; const H = 720;
-const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['standby', 'Standby']];
+const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['standby', 'Standby']];
+const guests = new Map(); // id -> { name, pc, video }
+let hostWs = null;
 
 const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), t0: 0 };
 const vid = (stream) => { const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {}); return v; };
@@ -72,6 +74,22 @@ function draw(now) {
       cover(ctx, st.camVideo, x, y, w, h);
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
     }
+  } else if (scene === 'guest' || scene === 'grid') {
+    const gs = [...guests.values()].filter((g) => g.video && g.video.videoWidth);
+    if (scene === 'guest' && gs.length) {
+      cover(ctx, gs[0].video, 0, 0, W, H);
+      if (st.camVideo) { const w = 320; const h = 180; cover(ctx, st.camVideo, W - w - 24, H - h - 24, w, h); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(W - w - 24, H - h - 24, w, h); }
+    } else {
+      const tiles = [st.camVideo && { v: st.camVideo, n: '' }, ...gs.map((g) => ({ v: g.video, n: g.name }))].filter(Boolean);
+      if (!tiles.length) { ctx.fillStyle = '#222'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#aaa'; ctx.textAlign = 'center'; ctx.font = '32px sans-serif'; ctx.fillText('Waiting for guests…', W / 2, H / 2); ctx.textAlign = 'left'; }
+      const cols = tiles.length <= 1 ? 1 : 2; const rows = Math.ceil(tiles.length / cols);
+      const tw = W / cols; const th = H / rows;
+      tiles.forEach((t, i) => {
+        const x = (i % cols) * tw; const y = Math.floor(i / cols) * th;
+        cover(ctx, t.v, x + 2, y + 2, tw - 4, th - 4);
+        if (t.n) { ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x + 12, y + th - 56, ctx.measureText(t.n).width + 24, 40); ctx.fillStyle = '#fff'; ctx.fillText(t.n, x + 24, y + th - 26); }
+      });
+    }
   } else if (scene === 'standby') {
     const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#1d2b64'); g.addColorStop(1, '#6a3093');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -100,6 +118,70 @@ function draw(now) {
     ctx.fillText(tick, x, H - 16);
   }
   requestAnimationFrame(draw);
+}
+
+// ---- guests (WebRTC to the host's browser; the server only relays signalling) ----
+function renderGuests() {
+  const ul = $('st-guests'); ul.replaceChildren();
+  for (const [id, g] of guests) {
+    const li = document.createElement('li'); const span = document.createElement('div'); span.className = 'grow'; span.textContent = g.name;
+    const b = document.createElement('button'); b.className = 'danger'; b.textContent = 'Remove';
+    b.addEventListener('click', () => hostWs?.send(JSON.stringify({ type: 'kick', to: id })));
+    li.append(span, b); ul.append(li);
+  }
+}
+function newGuest(id, name) {
+  if (guests.has(id)) return guests.get(id);
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] });
+  const g = { name, pc, video: null };
+  pc.onicecandidate = (e) => { if (e.candidate) hostWs?.send(JSON.stringify({ to: id, signal: { candidate: e.candidate } })); };
+  pc.ontrack = (e) => {
+    const stream = e.streams[0] || new MediaStream([e.track]);
+    if (e.track.kind === 'video') { g.video = vid(stream); }
+    else {
+      const a = document.createElement('audio'); a.muted = true; a.autoplay = true; a.srcObject = stream; a.play().catch(() => {}); g.audioEl = a; // Chrome needs a sink for WebAudio to see remote audio
+      addAudio(new MediaStream([e.track]), `g${id}`);
+    }
+  };
+  guests.set(id, g); renderGuests();
+  return g;
+}
+function dropGuest(id) {
+  const g = guests.get(id); if (!g) return;
+  try { g.pc.close(); } catch { /* ignore */ }
+  st.mixed.get(`g${id}`)?.disconnect(); st.mixed.delete(`g${id}`);
+  guests.delete(id); renderGuests();
+}
+async function onGuestSignal(id, signal) {
+  const g = guests.get(id); if (!g) return;
+  if (signal.sdp) {
+    await g.pc.setRemoteDescription(signal.sdp);
+    const mic = st.cam?.getAudioTracks()[0];
+    const t = g.pc.getTransceivers().find((x) => x.receiver.track.kind === 'audio');
+    if (t && mic) { await t.sender.replaceTrack(mic); t.direction = 'sendrecv'; } // guest hears the host
+    const answer = await g.pc.createAnswer();
+    await g.pc.setLocalDescription(answer);
+    hostWs?.send(JSON.stringify({ to: id, signal: { sdp: g.pc.localDescription } }));
+  } else if (signal.candidate) await g.pc.addIceCandidate(signal.candidate).catch(() => {});
+}
+async function invite() {
+  const res = await fetch('/api/studio/invite', { method: 'POST', headers: { 'x-requested-with': 'vivid', 'content-type': 'application/json' }, credentials: 'same-origin', body: '{}' });
+  if (!res.ok) return say('Could not create invite.');
+  const { token, url } = await res.json();
+  $('st-invite-link').value = `${location.origin}${url}`;
+  $('st-invite-box').classList.remove('hidden');
+  try { hostWs?.close(); } catch { /* ignore */ }
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/guest/host?token=${encodeURIComponent(token)}`);
+  hostWs = ws;
+  ws.onmessage = async (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'host-ready') for (const g of m.guests) newGuest(g.id, g.name);
+    else if (m.type === 'guest-joined') newGuest(m.id, m.name);
+    else if (m.type === 'guest-left') dropGuest(m.id);
+    else if (m.type === 'signal') await onGuestSignal(m.from, m.signal);
+    else if (m.type === 'error') say(m.message);
+  };
+  ws.onclose = () => { for (const id of [...guests.keys()]) dropGuest(id); if (hostWs === ws) hostWs = null; };
 }
 
 function pickMime() {
@@ -178,6 +260,7 @@ function init() {
   $('st-cam').addEventListener('click', useCamera);
   $('st-screen').addEventListener('click', useScreen);
   $('st-start').addEventListener('click', goLive);
+  $('st-invite').addEventListener('click', invite);
   $('st-stop').addEventListener('click', stopLive);
   $('st-logo').addEventListener('change', (e) => {
     const f = e.target.files[0]; if (!f) { st.logo = null; return; }

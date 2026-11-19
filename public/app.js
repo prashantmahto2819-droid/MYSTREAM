@@ -66,6 +66,7 @@ async function refresh() {
   badge.textContent = s.ingest.live ? 'Receiving your stream' : 'Not receiving';
   badge.className = 'badge' + (s.ingest.live ? ' live' : '');
   $('mtx-badge').classList.toggle('hidden', s.mediamtxOk !== false);
+  $('standby-banner').classList.toggle('hidden', !s.standby?.active);
 
   const list = $('dest-list');
   list.replaceChildren(...s.destinations.map((d) => {
@@ -283,6 +284,9 @@ async function loadSettings() {
   $('phone-note').textContent = s.alertsConfigured ? '' : 'WhatsApp alerts are not set up on the server yet.';
   $('record-toggle').checked = !!s.record;
   $('record-note').textContent = `(kept ${s.recordingKeepDays} days)`;
+  $('standby-toggle').checked = !!s.standby;
+  $('standby-text').value = s.standby_text || '';
+  $('standby-minutes').value = s.standby_minutes || 10;
   await refreshKeys();
 }
 
@@ -311,6 +315,15 @@ async function refreshKeys() {
     } }, 'Revoke'))));
 }
 
+$('standby-save').addEventListener('click', async () => {
+  try {
+    await api('PATCH', '/api/me', { standby: $('standby-toggle').checked, standby_text: $('standby-text').value, standby_minutes: Number($('standby-minutes').value) });
+    $('standby-save').textContent = 'Saved'; setTimeout(() => { $('standby-save').textContent = 'Save standby settings'; }, 1500);
+  } catch (err) { alert(err.message); }
+});
+$('standby-stop').addEventListener('click', async () => {
+  try { await api('POST', '/api/standby/stop'); await refresh(); } catch (err) { alert(err.message); }
+});
 $('record-toggle').addEventListener('change', async (e) => {
   try { await api('PATCH', '/api/me', { record: e.target.checked }); } catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
 });

@@ -69,3 +69,19 @@ export class FrameParser {
     }
   }
 }
+
+/** Completes the WebSocket handshake; returns false (and closes the socket) when it is not one. */
+export function handshake(req, socket) {
+  const key = req.headers['sec-websocket-key'];
+  if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket' || !key) {
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); socket.destroy(); return false;
+  }
+  socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${acceptKey(key)}`, '', ''].join('\r\n'));
+  socket.setNoDelay(true);
+  return true;
+}
+
+/** Browsers always send Origin on WebSocket handshakes: it must be this very site. */
+export function sameOrigin(req) {
+  try { const o = req.headers.origin; return !!o && new URL(o).host === req.headers.host; } catch { return false; }
+}

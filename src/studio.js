@@ -32,7 +32,8 @@ export function attachStudio(server, { store, relay, cfg, spawn = nodeSpawn, par
     const reject = (code, msg) => { socket.write(`HTTP/1.1 ${code} ${msg}\r\nConnection: close\r\n\r\n`); socket.destroy(); };
     let url;
     try { url = new URL(req.url, 'http://x'); } catch { return reject(400, 'Bad Request'); }
-    if (url.pathname !== '/api/studio/ws') return reject(404, 'Not Found');
+    if (url.pathname !== '/api/studio/ws') return; // another handler (or the final 404) deals with it
+    req.wsHandled = true;
     const key = req.headers['sec-websocket-key'];
     if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket' || !key) return reject(400, 'Bad Request');
     // Browsers always send Origin on WebSocket handshakes: it must be this very site (blocks cross-site hijacking).
@@ -113,6 +114,7 @@ export function attachStudio(server, { store, relay, cfg, spawn = nodeSpawn, par
     });
 
     socket.on('data', (c) => { try { parser.push(c); } catch (e) { log.warn?.('studio ws protocol error', e.message); intentional = false; finish('Protocol error', false); } });
+    socket.on('end', () => socket.destroy());
     socket.on('close', () => { intentional = intentional || !started; finish('Connection lost', false); });
     socket.on('error', () => {});
   }

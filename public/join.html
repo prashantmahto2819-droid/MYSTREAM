@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join live</title>
+  <link rel="stylesheet" href="/style.css?v=3">
+</head>
+<body>
+  <main class="card narrow" style="margin-top:6vh">
+    <h1>Join the live</h1>
+    <p class="muted">Allow your camera and microphone. Use headphones to avoid echo.</p>
+    <video id="g-preview" autoplay muted playsinline style="width:100%;background:#000;border-radius:8px;aspect-ratio:16/9"></video>
+    <audio id="g-remote" autoplay></audio>
+    <label>Your name <input id="g-name" maxlength="40" placeholder="Your name"></label>
+    <div class="row"><button id="g-join">Join</button><button id="g-mute" class="ghost hidden">Mute mic</button><button id="g-leave" class="danger hidden">Leave</button></div>
+    <p id="g-msg" class="sub"></p>
+  </main>
+  <script src="/join.js?v=3" type="module"></script>
+</body>
+</html>

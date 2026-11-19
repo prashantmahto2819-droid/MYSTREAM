@@ -98,6 +98,9 @@ export function openDb(dir) {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('record')) db.exec('ALTER TABLE users ADD COLUMN record INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('standby')) db.exec('ALTER TABLE users ADD COLUMN standby INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('standby_text')) db.exec("ALTER TABLE users ADD COLUMN standby_text TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('standby_minutes')) db.exec('ALTER TABLE users ADD COLUMN standby_minutes INTEGER NOT NULL DEFAULT 10');
   return makeStore(db);
 }
 
@@ -126,6 +129,9 @@ function makeStore(db) {
     updateUser(id, f) {
       if (f.phone !== undefined) q('UPDATE users SET phone=? WHERE id=?').run(f.phone, id);
       if (f.record !== undefined) q('UPDATE users SET record=? WHERE id=?').run(f.record ? 1 : 0, id);
+      if (f.standby !== undefined) q('UPDATE users SET standby=? WHERE id=?').run(f.standby ? 1 : 0, id);
+      if (f.standbyText !== undefined) q('UPDATE users SET standby_text=? WHERE id=?').run(f.standbyText, id);
+      if (f.standbyMinutes !== undefined) q('UPDATE users SET standby_minutes=? WHERE id=?').run(f.standbyMinutes, id);
       if (f.role !== undefined) q('UPDATE users SET role=? WHERE id=?').run(f.role, id);
       if (f.active !== undefined) q('UPDATE users SET active=? WHERE id=?').run(f.active ? 1 : 0, id);
       if (f.passwordHash !== undefined) q('UPDATE users SET password_hash=? WHERE id=?').run(f.passwordHash, id);

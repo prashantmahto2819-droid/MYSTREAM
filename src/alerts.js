@@ -55,6 +55,26 @@ export function playerEventHandler({ store, notifier }) {
   };
 }
 
+export function standbyEventHandler({ store, notifier }) {
+  return (ev) => {
+    const log = (a, d = '') => store.addActivity(ev.userId, a, d);
+    switch (ev.type) {
+      case 'standby_started':
+        log('standby_started', `${ev.detail} min`);
+        quiet(notifier.send(ev.userId, `⏸️ ${ev.name}: OBS कट गया. स्टैंडबाय स्क्रीन चालू है (अधिकतम ${ev.detail} मिनट). OBS दोबारा जोड़ें या dashboard से बंद करें.`, { key: `standby:${ev.userId}` }));
+        break;
+      case 'standby_ended': log('standby_ended_obs_back'); break;
+      case 'standby_stopped': log('standby_stopped_by_user'); break;
+      case 'standby_timeout':
+        log('standby_timeout');
+        quiet(notifier.send(ev.userId, `⏹️ ${ev.name}: OBS वापस नहीं आया, स्टैंडबाय बंद हुआ और लाइव रुक गया.`, { key: `standby-end:${ev.userId}` }));
+        break;
+      case 'standby_failed': log('standby_failed', ev.detail || ''); break;
+      default:
+    }
+  };
+}
+
 export function recorderEventHandler({ store }) {
   return (ev) => {
     const map = { record_started: 'recording_started', record_saved: 'recording_saved', record_skipped: 'recording_skipped' };
