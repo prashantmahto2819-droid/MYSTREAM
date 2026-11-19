@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { summarize } from './analytics.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -220,6 +221,10 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
 
   route('GET', '/api/activity', async (_req, res, { user }) => {
     send(res, 200, { activity: store.listActivity(user.role === 'admin' ? null : user.id) });
+  });
+
+  route('GET', '/api/analytics', async (_req, res, { user }) => {
+    send(res, 200, summarize(store.activitySince(user.role === 'admin' ? null : user.id, 14), { days: 14 }));
   });
 
   route('PATCH', '/api/me', async (req, res, { user }) => {

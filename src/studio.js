@@ -52,7 +52,7 @@ export function attachStudio(server, { store, relay, cfg, spawn = nodeSpawn, par
   function handle(user, socket) {
     const send = (obj) => { if (!socket.destroyed) socket.write(encodeText(JSON.stringify(obj))); };
     let proc = null; let started = false; let ended = false; let intentional = false; let lastLine = '';
-    let bytes = 0; let filtered = false;
+    let bytes = 0; let filtered = false; let t0 = 0;
 
     const finish = (why, notifyClient = true) => {
       if (ended) return; ended = true;
@@ -62,7 +62,7 @@ export function attachStudio(server, { store, relay, cfg, spawn = nodeSpawn, par
       try { proc?.stdin?.end(); } catch { /* ignore */ }
       if (proc) setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 4000).unref?.();
       if (started) {
-        store.addActivity?.(user.id, 'studio_stopped', `${Math.round(bytes / 1048576)} MB`);
+        store.addActivity?.(user.id, 'studio_stopped', `${Math.round(bytes / 1048576)} MB, ${Math.round((Date.now() - t0) / 1000)}s`);
         onEvent({ type: 'studio_stopped', userId: user.id, detail: why });
       }
       if (notifyClient && !socket.destroyed) { send({ type: 'ended', reason: why }); socket.end(encodeClose(1000)); }
@@ -98,7 +98,7 @@ export function attachStudio(server, { store, relay, cfg, spawn = nodeSpawn, par
         const height = QUALITY[m.height] ? m.height : 720;
         const args = buildStudioArgs({ output: `${cfg.mediamtxRtmp}/live/${user.ingest_key}`, hasAudio: m.audio !== false, height, kbps: QUALITY[height], portrait: m.portrait === true });
         try { proc = spawn(cfg.ffmpegBin, args, { stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { send({ type: 'error', message: `Cannot start ffmpeg: ${e.message}` }); return finish('ffmpeg missing'); }
-        started = true; active.set(user.id, session);
+        started = true; t0 = Date.now(); active.set(user.id, session);
         proc.stderr?.on('data', (c) => { const l = String(c).split(/\r?\n/).filter(Boolean); if (l.length) lastLine = l[l.length - 1].slice(0, 300); });
         proc.stdin?.on('error', () => {});
         proc.on('error', (e) => { lastLine = e.code === 'ENOENT' ? 'ffmpeg not found on the server' : e.message; });

@@ -154,3 +154,6 @@ dialog.modal::backdrop { background:rgba(3,5,10,.65); backdrop-filter:blur(5px);
   .rail-btn { flex:0 0 auto; min-width:64px; }
   .st-drawer { order:3; border-left:0; border-top:1px solid var(--line); max-height:none; min-height:0; }
 }
+
+.barbox { width:120px; height:8px; background:rgba(255,255,255,.08); border-radius:99px; overflow:hidden; }
+.bar { display:block; height:100%; background:var(--grad); }

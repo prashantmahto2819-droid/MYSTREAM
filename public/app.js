@@ -117,6 +117,14 @@ async function refresh() {
   $('activity').replaceChildren(...a.activity.slice(0, 30).map((x) =>
     el('li', {}, el('span', { class: 'sub' }, x.ts), el('span', { class: 'grow' }, `${x.user_name || 'system'} · ${x.action.replace(/_/g, ' ')}${x.detail ? ' — ' + x.detail : ''}`))));
 
+  try {
+    const an = await api('GET', '/api/analytics'); const max = Math.max(1, ...an.days.map((d) => d.minutes));
+    $('analytics').replaceChildren(...an.days.slice().reverse().map((d) => {
+      const bar = el('span', { class: 'bar' }); bar.style.width = `${Math.round((d.minutes / max) * 100)}%`;
+      return el('li', {}, el('span', { class: 'sub' }, d.date), el('span', { class: 'grow' }, `${d.lives} live${d.lives === 1 ? '' : 's'}, ${d.minutes} min`), el('span', { class: 'barbox' }, bar));
+    }));
+    $('analytics-total').textContent = `Total: ${an.totals.lives} lives, ${an.totals.minutes} minutes streamed from the browser studio.`;
+  } catch { /* analytics is optional */ }
   await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings()]);
   renderScheduleChoices(s.destinations);
   if (me.role === 'admin') await refreshUsers();

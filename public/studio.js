@@ -1,12 +1,13 @@
 // Browser studio: draws scenes + overlays on a canvas, records it with MediaRecorder and streams
 // the chunks over a WebSocket to the server, which turns them into RTMP (see src/studio.js).
+import { qrMatrix } from './qr.js';
 const $ = (id) => document.getElementById(id);
 let W = 1280; let H = 720;
 const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['side', 'Side by side'], ['media', 'Clip'], ['speaker', 'Speaker'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['cams', 'All cameras'], ['countdown', 'Countdown'], ['standby', 'Standby']];
 const guests = new Map(); // id -> { name, pc, video }
 let hostWs = null;
 
-const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), gains: new Map(), analysers: new Map(), labels: new Map(), micStreams: new Map(), levels: new Map(), raw: new Map(), extras: [], mainExtra: -1, spk: '', spkAt: 0, t0: 0, timerEnd: 0 };
+const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), gains: new Map(), analysers: new Map(), labels: new Map(), micStreams: new Map(), levels: new Map(), raw: new Map(), extras: [], mainExtra: -1, sent: 0, frames: 0, retries: 0, spk: '', spkAt: 0, t0: 0, timerEnd: 0 };
 const vid = (stream) => { const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {}); return v; };
 function toast(m) {
   const box = $('toasts'); if (!m || !box) return;
@@ -247,9 +248,13 @@ const TEMPLATES = {
   'News - Speaker with ticker': { scene: 'speaker', f: { 'st-theme': 'news', 'st-ticker': 'Breaking news: write your headline here', 'st-lower': 'Reporter name' } },
   'Podcast - Side by side': { scene: 'side', f: { 'st-theme': 'round', 'st-bg': 'grad4' } },
   'Interview - Host + guests': { scene: 'grid', f: { 'st-theme': 'air', 'st-bg': 'grad3' } },
+  'Vertical - Shorts speaker': { scene: 'cam', orient: 'portrait', f: { 'st-theme': 'round', 'st-lower': 'Your name', 'st-bg': 'grad2' } },
+  'Vertical - Two people': { scene: 'grid', orient: 'portrait', f: { 'st-theme': 'round', 'st-bg': 'grad4' } },
+  'Landscape - Standard': { scene: 'cam', orient: 'landscape', f: { 'st-theme': 'air' } },
 };
 function applyTemplate() {
   const t = TEMPLATES[$('st-template').value]; if (!t) return;
+  if (t.orient) { $('st-orient').value = t.orient; setOrientation(t.orient === 'portrait'); }
   applySaved({ scene: t.scene, f: t.f, c: {} });
   if (t.timer) { st.timerEnd = Date.now() + t.timer * 60000; }
   say(`Template applied: ${$('st-template').value}`);
@@ -259,7 +264,7 @@ const pen = { on: false, strokes: [], cur: null };
 let chatMsg = null;
 
 // ---- layout the user can drag on the preview ----
-const makeLayout = () => ({ pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 }, text: { x: 60, y: 90 }, sticker: { x: 60, y: Math.round(H / 2 - 80) } });
+const makeLayout = () => ({ pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 }, text: { x: 60, y: 90 }, qr: { x: W - 300, y: 120 }, sticker: { x: 60, y: Math.round(H / 2 - 80) } });
 const layout = makeLayout();
 function setOrientation(portrait) {
   if (st.live || local) return say('Stop the live / recording before changing orientation.');
@@ -443,6 +448,19 @@ function drawSpeaker(ctx, now) {
   const th = Math.min(169, Math.floor(H / Math.max(1, others.length)) - 6);
   others.forEach((p, i) => drawTile(ctx, p, bw + 6, i * (th + 6) + 3, strip - 9, th, (st.levels.get(p.key) || 0) > 0.04));
 }
+const qr = { text: '', m: null, warned: '' };
+function drawQr(ctx) {
+  const text = $('st-qr').value.trim(); if (!text) return;
+  if (qr.text !== text) { qr.text = text; try { qr.m = qrMatrix(text); } catch { qr.m = null; } }
+  if (!qr.m) { if (qr.warned !== text) { qr.warned = text; say('Link is too long for the QR code (about 170 characters at most).'); } return; }
+  const n = qr.m.length; const cell = Math.max(2, Math.floor(Number($('st-qr-size').value) / (n + 8))); const box = cell * (n + 8);
+  const cap = $('st-qr-label').value.trim(); const capH = cap ? 46 : 0; const { x, y } = layout.qr;
+  ctx.fillStyle = '#fff'; ctx.fillRect(x, y, box, box + capH);
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.m[r][c]) ctx.fillRect(x + (c + 4) * cell, y + (r + 4) * cell, cell, cell);
+  if (cap) { ctx.font = fnt(26); ctx.textAlign = 'center'; ctx.fillStyle = '#000'; ctx.fillText(cap, x + box / 2, y + box + 32, box - 12); ctx.textAlign = 'left'; }
+  hits.push({ id: 'qr', x, y, w: box, h: box + capH });
+}
 function drawSide(ctx, main) {
   const gs = [...guests.values()].find((g) => g.video && g.video.videoWidth);
   const first = st.screenVideo ? { v: st.screenVideo, fit: true } : media.el ? { v: media.el, fit: true } : gs ? { v: gs.video } : st.extras[0] ? { v: st.extras[0].video, cam: true } : null;
@@ -529,6 +547,7 @@ function draw(now) {
     const h = Number($('st-sticker-size').value); const w = Math.round(stickerImg.width * (h / stickerImg.height)); const { x, y } = layout.sticker;
     ctx.drawImage(stickerImg, x, y, w, h); hits.push({ id: 'sticker', x, y, w, h });
   }
+  if (!bare) drawQr(ctx);
   if (st.logo && !bare) {
     const { x, y, h } = layout.logo; const w = st.logo.width * (h / st.logo.height);
     ctx.drawImage(st.logo, x, y, w, h); hits.push({ id: 'logo', x, y, w, h });
@@ -577,6 +596,7 @@ function draw(now) {
     const tw = ctx.measureText(tick).width + 200; const x = W - ((now / 12) % (tw + W));
     ctx.fillText(tick, x, H - 16);
   }
+  st.frames += 1;
   requestAnimationFrame(draw);
 }
 
@@ -745,10 +765,11 @@ function goLive() {
       const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: { 480: 1_500_000, 720: 3_000_000, 1080: 5_000_000 }[height], audioBitsPerSecond: 128_000 });
       rec.ondataavailable = (e) => {
         if (!e.data.size || ws.readyState !== 1) return;
+        st.sent += e.data.size;
         if (ws.bufferedAmount > 8 * 1024 * 1024) say('Your internet is too slow for this quality. Choose 480p.');
         e.data.arrayBuffer().then((b) => ws.readyState === 1 && ws.send(b));
       };
-      rec.start(1000); st.rec = rec; st.live = true; st.t0 = Date.now();
+      rec.start(1000); st.rec = rec; st.live = true; st.t0 = Date.now(); st.sent = 0; st.retries = 0;
       badge('LIVE', 'ok'); say('Streaming. Check YouTube Studio / Facebook in a few seconds.');
       $('st-stop').classList.remove('hidden'); $('st-golive-open').classList.add('hidden'); $('st-start').disabled = false; $('dlg-golive').close();
     } else if (m.type === 'error') { say(m.message); } else if (m.type === 'ended') { cleanup(m.reason); }
@@ -757,12 +778,17 @@ function goLive() {
   ws.onerror = () => say('Could not connect to the server.');
 }
 function cleanup(reason) {
+  const lost = st.live && reason === 'Connection lost';
   try { if (st.rec && st.rec.state !== 'inactive') st.rec.stop(); } catch { /* ignore */ }
   st.rec = null; st.live = false;
   badge('Off'); if (reason) say(reason);
   $('st-stop').classList.add('hidden'); $('st-golive-open').classList.remove('hidden'); $('st-start').disabled = false;
   try { st.ws?.close(); } catch { /* ignore */ }
   st.ws = null;
+  if (lost && st.retries < 3 && (st.cam || st.screen)) {
+    st.retries += 1; toast(`Connection lost. Reconnecting (${st.retries}/3)...`);
+    setTimeout(() => { if (!st.live && !st.ws) goLive(); }, 3000);
+  }
 }
 function stopLive() { try { st.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* ignore */ } setTimeout(() => cleanup('Stopped'), 500); }
 
@@ -916,13 +942,27 @@ function init() {
   });
   $('st-sticker-file').addEventListener('change', (e) => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { stickerImg = img; }; img.src = URL.createObjectURL(f); });
   $('st-mute').addEventListener('click', toggleMic);
+  try { const q = localStorage.getItem('vs_quality'); if (q) $('st-quality').value = q; } catch { /* ignore */ }
+  $('st-quality').addEventListener('change', () => { try { localStorage.setItem('vs_quality', $('st-quality').value); } catch { /* ignore */ } });
+  let lastFrames = 0;
+  setInterval(() => {
+    const fps = st.frames - lastFrames; lastFrames = st.frames;
+    const secs = st.live ? Math.round((Date.now() - st.t0) / 1000) : 0;
+    const buf = st.ws ? Math.round(st.ws.bufferedAmount / 1024) : 0;
+    const mb = (st.sent / 1048576).toFixed(1); const kbps = secs ? Math.round((st.sent * 8) / 1000 / secs) : 0;
+    const hms = `${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor(secs / 60) % 60).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+    const health = !st.live ? 'Not live' : buf > 4096 ? 'Slow internet: lower the quality' : buf > 1024 ? 'Slightly slow' : 'Good';
+    const rows = [['Status', st.live ? 'LIVE' : 'Off'], ['Live time', hms], ['Sent', `${mb} MB`], ['Average bitrate', `${kbps} kbps`], ['Upload backlog', `${buf} KB`], ['Connection', health], ['Preview speed', `${fps} fps`], ['Canvas', `${W} x ${H}`], ['Guests', String(guests.size)], ['Cameras', String((st.camVideo ? 1 : 0) + st.extras.length)], ['Microphones', String([...st.gains.keys()].filter((k) => k === 'cam' || k.startsWith('mic:')).length)]];
+    const box = $('st-stats'); if (!box) return;
+    box.replaceChildren(...rows.map(([k, v]) => { const li = document.createElement('li'); const a = document.createElement('span'); a.className = 'grow'; a.textContent = k; const b = document.createElement('strong'); b.textContent = v; li.append(a, b); return li; }));
+  }, 1000);
   $('st-addcam').addEventListener('click', addCamera);
   $('st-addmic').addEventListener('click', addMic);
   $('st-media-loop').addEventListener('change', (e) => { if (media.el?.pause) media.el.loop = e.target.checked; });
   setInterval(updateLevels, 100);
   initChat();
   $('st-rec').addEventListener('click', toggleRecord);
-  $('st-start').addEventListener('click', goLive);
+  $('st-start').addEventListener('click', () => { st.retries = 0; goLive(); });
   $('st-invite').addEventListener('click', invite);
   $('st-return').addEventListener('change', () => { for (const g of guests.values()) sendProgram(g).catch(() => {}); });
   $('st-stop').addEventListener('click', stopLive);

@@ -201,3 +201,10 @@ If the app restarts with "unable to open database file", the data folder belongs
 - Studio: preview in the middle, scene buttons below it, icon rail on the right (Camera, Clips, Audio, Guests, Scenes, Backdrop, Colour, Position, Graphics, Tools, Chat, Notes) opening one side panel at a time.
 - Popups: Go live (destinations + quality), Studio settings (output orientation, camera size), OBS setup, Add destination, Upload video, New schedule, Add team member, API key, Change password.
 - Toast messages appear bottom-right (also over popups). On small screens the rail becomes a bar under the preview.
+
+### Browser studio: final extras
+- QR code on the stream (own encoder, checked against an independent decoder; link up to about 170 characters, drag to move, optional caption).
+- Stats panel (live time, MB sent, bitrate, upload backlog, connection health) and automatic reconnect (3 tries) if the connection to the server drops.
+- Vertical templates (Shorts speaker, two people) that also switch the output to Portrait; the chosen quality is remembered.
+- Activity tab shows the last 14 days (lives and minutes) from the studio log.
+- Still not possible in a browser: virtual webcam, IP camera, motion detection. Facebook comments need extra Facebook permissions and were not built.

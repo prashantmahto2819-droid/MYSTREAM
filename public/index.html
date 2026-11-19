@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vivid Stream</title>
-  <link rel="stylesheet" href="/style.css?v=11">
+  <link rel="stylesheet" href="/style.css?v=12">
 </head>
 <body>
   <main id="login" class="card narrow hidden">
@@ -163,6 +163,9 @@
             <label>Free text (drag it on the preview) <input id="st-text" maxlength="80" placeholder="Any text..."></label>
             <div class="row"><input id="st-text-size" class="w140" type="range" min="20" max="140" value="56"><input id="st-text-color" type="color" value="#ffffff"></div>
             <label>Sticker image <input id="st-sticker-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+            <label>QR code link (shows on the stream, drag to move) <input id="st-qr" maxlength="170" placeholder="https://..."></label>
+            <label>QR caption <input id="st-qr-label" maxlength="40" placeholder="Scan to follow"></label>
+            <label>QR size <input id="st-qr-size" type="range" min="140" max="420" value="240"></label>
             <label>Sticker size <input id="st-sticker-size" type="range" min="40" max="500" value="160"></label>
             <label>Overlay frame (PNG with transparency) <input id="st-overlay-file" type="file" accept="image/png,image/webp"></label>
             <label class="switch"><input type="checkbox" id="st-overlay-on"> Show overlay</label>
@@ -184,7 +187,12 @@
                     <div class="row"><select id="chat-yt"></select><button id="chat-yt-go" class="ghost">Start YouTube chat</button><input id="chat-twitch" placeholder="Twitch channel" maxlength="25"><button id="chat-twitch-go" class="ghost">Start Twitch chat</button></div>
                     <ul id="chat-list" class="list scroll"></ul>
           </section>
-<section class="panel" data-panelbody="notes">
+<section class="panel" data-panelbody="stats">
+            <h3>Live stats</h3>
+            <ul id="st-stats" class="list small"></ul>
+            <p class="sub">If the backlog keeps growing, your internet is too slow for this quality. The studio reconnects by itself up to 3 times if the connection drops.</p>
+          </section>
+          <section class="panel" data-panelbody="notes">
             <h3>Private notes</h3>
             <p class="muted">Only you see this. It is not on the stream.</p>
             <textarea id="st-notes" rows="6" placeholder="Your script or points..." class="notes"></textarea>
@@ -203,6 +211,7 @@
             <button class="rail-btn" data-panel="graphics" title="Graphics"><span class="ico">&#10024;</span><span class="lbl">Graphics</span></button>
             <button class="rail-btn" data-panel="tools" title="Tools"><span class="ico">&#9998;</span><span class="lbl">Tools</span></button>
             <button class="rail-btn" data-panel="chat" title="Chat"><span class="ico">&#128172;</span><span class="lbl">Chat</span></button>
+            <button class="rail-btn" data-panel="stats" title="Stats"><span class="ico">&#128202;</span><span class="lbl">Stats</span></button>
             <button class="rail-btn" data-panel="notes" title="Notes"><span class="ico">&#128221;</span><span class="lbl">Notes</span></button>
           </nav>
         </div>
@@ -278,6 +287,12 @@
         <h2>Team</h2>
         <ul id="user-list" class="list"></ul>
         <button data-open="dlg-user" class="">+ Add team member</button>
+      </section>
+
+      <section class="card" data-tab="activity">
+        <h2>Last 14 days</h2>
+        <ul id="analytics" class="list small"></ul>
+        <p id="analytics-total" class="sub"></p>
       </section>
 
       <section class="card" data-tab="activity">
@@ -369,8 +384,8 @@
 </div></dialog>
   <div id="toasts" popover="manual"></div>
   </div>
-  <script src="/app.js?v=11" type="module"></script>
-  <script src="/studio.js?v=11" type="module"></script>
-  <script src="/nav.js?v=11" type="module"></script>
+  <script src="/app.js?v=12" type="module"></script>
+  <script src="/studio.js?v=12" type="module"></script>
+  <script src="/nav.js?v=12" type="module"></script>
 </body>
 </html>
