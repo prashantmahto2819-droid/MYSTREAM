@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vivid Stream</title>
-  <link rel="stylesheet" href="/style.css?v=10">
+  <link rel="stylesheet" href="/style.css?v=11">
 </head>
 <body>
   <main id="login" class="card narrow hidden">
@@ -44,21 +44,33 @@
         <button id="standby-stop" class="danger">Stop standby (end live)</button>
       </section>
 
-      <section class="card wide" id="studio-card" data-tab="studio">
-        <h2>Go live from your browser</h2>
-        <p class="muted">No OBS needed: camera or screen, scenes and overlays, straight to your destinations. Best on a laptop with Chrome or Edge.</p>
-        <div class="studio">
-          <div>
-            <canvas id="st-canvas" width="1280" height="720"></canvas>
-            <p><span id="st-badge" class="badge">Off</span> <span id="st-msg" class="sub"></span></p>
+      <section class="card wide studio-app" id="studio-card" data-tab="studio">
+        <div class="st-top">
+          <div class="st-title"><h2>Studio</h2> <span id="st-badge" class="badge">Off</span> <span id="st-msg" class="sub"></span></div>
+          <div class="st-actions">
+            <button data-open="dlg-obs" class="ghost">OBS setup</button>
+            <button data-open="dlg-settings" class="ghost">&#9881; Settings</button>
+            <button id="st-rec" class="ghost">&#9679; Record</button>
+            <button id="st-golive-open" data-open="dlg-golive">Go live</button>
+            <button id="st-stop" class="danger hidden">Stop</button>
           </div>
-          <div class="stack">
-            <h3>Sources</h3>
+        </div>
+        <div class="st-body">
+          <div class="st-center">
+            <canvas id="st-canvas" width="1280" height="720"></canvas>
+            <div id="st-scenes" class="scenes"></div>
+            <div class="row quick"><button id="st-cam" class="ghost">&#127909; Camera + mic</button><button id="st-screen" class="ghost">&#128187; Share screen</button></div>
+          </div>
+          <aside class="st-drawer" id="st-drawer">
+          <section class="panel" data-panelbody="sources">
+            <h3>Camera &amp; sources</h3>
             <label>Camera <select id="st-camdev"></select></label>
             <label>Microphone <select id="st-micdev"></select></label>
-            <div class="row"><button id="st-cam" class="ghost">Camera + mic</button><button id="st-screen" class="ghost">Share screen</button></div>
             <div class="row"><button id="st-addcam" class="ghost">+ Another camera</button><button id="st-addmic" class="ghost">+ Another microphone</button></div>
             <ul id="st-camlist" class="list small"></ul>
+          </section>
+<section class="panel" data-panelbody="media">
+            <h3>Clips &amp; music</h3>
             <label>Media scene: videos, photos, slides <input id="st-media-files" type="file" accept="video/*,image/*" multiple></label>
             <ul id="st-clips" class="list small"></ul>
             <label class="switch"><input type="checkbox" id="st-media-loop" checked> Loop clip</label>
@@ -66,39 +78,55 @@
             <p class="sub">With loop off, the stream goes back to the previous scene when the clip ends.</p>
             <div class="row"><button id="st-media-prev" class="ghost">&#9664;</button><button id="st-media-play" class="ghost">Play / Pause</button><button id="st-media-next" class="ghost">&#9654;</button></div>
             <p id="st-media-name" class="sub"></p>
-            <h3>Background music</h3>
             <input id="st-music-files" type="file" accept="audio/*" multiple>
             <ul id="st-music-list" class="list small"></ul>
             <div class="row"><button id="st-music-pause" class="ghost">Pause / Play</button><button id="st-music-next" class="ghost">Next song</button></div>
+          </section>
+<section class="panel" data-panelbody="audio">
             <h3>Audio mixer</h3>
             <div id="st-mixer" class="stack"></div>
+            <button id="st-mute" class="ghost">Mute microphone</button>
+            <label class="switch"><input type="checkbox" id="st-ec" checked> Echo cancel</label>
+            <label class="switch"><input type="checkbox" id="st-ns" checked> Noise reduction</label>
+            <label class="switch"><input type="checkbox" id="st-agc" checked> Auto volume</label>
+            <label>Mic delay (lip-sync) <input id="st-adelay" type="range" min="0" max="500" value="0"></label>
+          </section>
+<section class="panel" data-panelbody="guests">
             <h3>Guests</h3>
             <div class="row"><button id="st-invite" class="ghost">Invite a guest</button></div>
             <div id="st-invite-box" class="stack hidden">
-              <div class="copy-row"><input id="st-invite-link" readonly><button data-copy="st-invite-link" class="ghost">Copy</button></div>
-              <p class="sub">Send this link. The guest opens it, allows camera and mic, and appears here. Up to 8 guests (4 or fewer is smoother). Link works while this page is open (6 hours).</p>
-            </div>
+                          <div class="copy-row"><input id="st-invite-link" readonly><button data-copy="st-invite-link" class="ghost">Copy</button></div>
+                          <p class="sub">Send this link. The guest opens it, allows camera and mic, and appears here. Up to 8 guests (4 or fewer is smoother). Link works while this page is open (6 hours).</p>
+                        </div>
             <label class="switch"><input type="checkbox" id="st-return"> Show guests the live output</label>
             <ul id="st-guests" class="list"></ul>
             <label>Speaker scene: who is big <select id="st-spk"><option value="auto">Auto (whoever speaks)</option></select></label>
-            <h3>Scene (switch any time)</h3>
-            <div class="row" id="st-scenes"></div>
-            <h3>Look</h3>
+          </section>
+<section class="panel" data-panelbody="scenes">
+            <h3>Templates &amp; scenes</h3>
+            <div class="row"><select id="st-template"></select><button id="st-template-apply" class="ghost">Apply template</button></div>
+            <ul id="st-saved" class="list small"></ul>
+            <button id="st-savescene" class="ghost">Save current look as scene</button>
+          </section>
+<section class="panel" data-panelbody="background">
+            <h3>Background</h3>
             <label>Background <select id="st-bg"><option value="black">Black</option><option value="color">Colour</option><option value="image">Image</option><option value="grad1">Gradient: purple</option><option value="grad2">Gradient: sunset</option><option value="grad3">Gradient: deep blue</option><option value="grad4">Gradient: green</option></select></label>
             <input id="st-bg-color" type="color" value="#1d2b64" class="hidden">
             <input id="st-bg-file" type="file" accept="image/png,image/jpeg,image/webp" class="hidden">
             <label>Remove my room (AI) <select id="st-cambg"><option value="none">Off</option><option value="blur">Blur the room</option><option value="replace">Replace with the background above</option></select></label>
-            <label>Output <select id="st-orient"><option value="landscape">Landscape 16:9 (YouTube, Facebook)</option><option value="portrait">Portrait 9:16 (Shorts, Reels)</option></select></label>
-            <h3>Templates</h3>
-            <div class="row"><select id="st-template"></select><button id="st-template-apply" class="ghost">Apply template</button></div>
-            <h3>Saved scenes</h3>
-            <ul id="st-saved" class="list small"></ul>
-            <button id="st-savescene" class="ghost">Save current look as scene</button>
+            <label class="switch"><input type="checkbox" id="st-key"> Green screen: remove a green backdrop behind me</label>
+            <label>Green screen strength <input id="st-key-level" type="range" min="15" max="120" value="50"></label>
+            <label>Small camera size <input id="st-pip-size" type="range" min="200" max="640" value="320"></label>
+            <p class="sub">Drag the small camera, logo or name bar on the preview to move them. To see the background behind you, turn on "Remove my room (AI)" or green screen.</p>
+          </section>
+<section class="panel" data-panelbody="colour">
+            <h3>Colour mixer</h3>
             <label class="switch"><input type="checkbox" id="st-mirror"> Mirror my camera</label>
+            <label>Camera filter <select id="st-filter"><option value="none">None</option><option value="bw">Black &amp; white</option><option value="sepia">Sepia</option><option value="warm">Warm</option><option value="cool">Cool</option><option value="vivid">Vivid</option><option value="purple">Purple</option></select></label>
+            <label class="switch"><input type="checkbox" id="st-touch"> Touch up appearance (soft)</label>
             <label>Brightness <input id="st-bright" type="range" min="60" max="160" value="100"></label>
             <label>Contrast <input id="st-contrast" type="range" min="60" max="160" value="100"></label>
             <label>Colour <input id="st-sat" type="range" min="0" max="200" value="100"></label>
-            <h3>Colour mixer</h3>
             <label>Red <input id="st-red" type="range" min="0" max="200" value="100"></label>
             <label>Green <input id="st-green" type="range" min="0" max="200" value="100"></label>
             <label>Blue <input id="st-blue" type="range" min="0" max="200" value="100"></label>
@@ -107,6 +135,9 @@
             <label>Hue <input id="st-hue" type="range" min="-180" max="180" value="0"></label>
             <label>Sharpen <input id="st-sharp" type="range" min="0" max="100" value="0"></label>
             <label>Vignette (dark edges) <input id="st-vig" type="range" min="0" max="90" value="0"></label>
+            <div class="row"><button id="st-freeze" class="ghost">Freeze camera</button><button id="st-color-reset" class="ghost">Reset colours &amp; position</button></div>
+          </section>
+<section class="panel" data-panelbody="position">
             <h3>Camera position</h3>
             <label>Zoom <input id="st-zoom" type="range" min="100" max="300" value="100"></label>
             <label>Move left / right <input id="st-panx" type="range" min="-100" max="100" value="0"></label>
@@ -120,77 +151,61 @@
             <label>Crop right <input id="st-crop-r" type="range" min="0" max="45" value="0"></label>
             <label>Crop top <input id="st-crop-t" type="range" min="0" max="45" value="0"></label>
             <label>Crop bottom <input id="st-crop-b" type="range" min="0" max="45" value="0"></label>
-            <div class="row"><button id="st-freeze" class="ghost">Freeze camera</button><button id="st-color-reset" class="ghost">Reset colours &amp; position</button></div>
-            <h3>Camera and mic quality</h3>
-            <label>Camera size <select id="st-camres"><option value="1280x720">720p</option><option value="1920x1080">1080p (sharper zoom)</option><option value="640x480">480p</option></select></label>
-            <label>Camera frames <select id="st-camfps"><option value="30">30 fps</option><option value="24">24 fps</option><option value="60">60 fps</option><option value="15">15 fps</option></select></label>
-            <label class="switch"><input type="checkbox" id="st-ec" checked> Echo cancel</label>
-            <label class="switch"><input type="checkbox" id="st-ns" checked> Noise reduction</label>
-            <label class="switch"><input type="checkbox" id="st-agc" checked> Auto volume</label>
-            <label>Mic delay (lip-sync) <input id="st-adelay" type="range" min="0" max="500" value="0"></label>
-            <p class="sub">Camera size, frames and the three switches apply when you press "Camera + mic" again.</p>
-            <h3>Text and stickers</h3>
+          </section>
+<section class="panel" data-panelbody="graphics">
+            <h3>Graphics &amp; text</h3>
+            <label>Theme <select id="st-theme"><option value="air">Air</option><option value="base">Base</option><option value="news">News</option><option value="round">Round</option></select></label>
+            <label>Font <select id="st-font"><option value="sans-serif">Default</option><option value="serif">Serif</option><option value="monospace">Mono</option><option value="Impact, sans-serif">Impact</option><option value="'Trebuchet MS', sans-serif">Trebuchet</option></select></label>
+            <label>Logo (image) <input id="st-logo" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <label>Logo size <input id="st-logo-size" type="range" min="40" max="240" value="90"></label>
+            <label>Lower-third (name / title) <input id="st-lower" maxlength="80" placeholder="e.g. Prashant Mahto - Live"></label>
+            <label>Scrolling ticker <input id="st-ticker" maxlength="200" placeholder="Breaking news text..."></label>
             <label>Free text (drag it on the preview) <input id="st-text" maxlength="80" placeholder="Any text..."></label>
             <div class="row"><input id="st-text-size" class="w140" type="range" min="20" max="140" value="56"><input id="st-text-color" type="color" value="#ffffff"></div>
             <label>Sticker image <input id="st-sticker-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
             <label>Sticker size <input id="st-sticker-size" type="range" min="40" max="500" value="160"></label>
-            <label class="switch"><input type="checkbox" id="st-key"> Green screen: remove a green backdrop behind me</label>
-            <label>Green screen strength <input id="st-key-level" type="range" min="15" max="120" value="50"></label>
-            <label>Small camera size <input id="st-pip-size" type="range" min="200" max="640" value="320"></label>
-            <p class="sub">Drag the small camera, logo or name bar on the preview to move them. The background fills the screen behind a green-screen camera, in guest tiles it is hidden.</p>
-            <h3>Overlays</h3>
-            <label>Logo (image) <input id="st-logo" type="file" accept="image/png,image/jpeg,image/webp"></label>
-            <label>Logo size <input id="st-logo-size" type="range" min="40" max="240" value="90"></label>
-            <label>Lower-third (name / title) <input id="st-lower" maxlength="80" placeholder="e.g. Prashant Mahto - Live"></label>
+            <label>Overlay frame (PNG with transparency) <input id="st-overlay-file" type="file" accept="image/png,image/webp"></label>
+            <label class="switch"><input type="checkbox" id="st-overlay-on"> Show overlay</label>
             <label>Timer <select id="st-timer"><option value="none">Off</option><option value="countdown">Countdown</option><option value="clock">Clock</option></select></label>
             <div class="row"><input id="st-timer-min" class="w80" type="number" min="1" max="600" value="5"><button id="st-timer-start" class="ghost">Start countdown (min)</button></div>
             <label class="switch"><input type="checkbox" id="st-timer-auto" checked> Countdown scene: switch to camera at 00:00</label>
+            <label>Standby text <input id="st-standby" maxlength="80" placeholder="We will be back shortly"></label>
+          </section>
+<section class="panel" data-panelbody="tools">
+            <h3>Tools &amp; captions</h3>
             <div class="row"><button id="st-draw" class="ghost">&#9998; Draw on screen</button><input id="st-pen" type="color" value="#ff3b30"><button id="st-clear" class="ghost">Clear drawing</button><button id="st-snap" class="ghost">Snapshot</button></div>
-            <p class="sub">Keys: 1-9 scenes, arrows change media, D draw, C clear drawing, S snapshot, M mute mic.</p>
-            <label>Theme <select id="st-theme"><option value="air">Air</option><option value="base">Base</option><option value="news">News</option><option value="round">Round</option></select></label>
-            <label>Font <select id="st-font"><option value="sans-serif">Default</option><option value="serif">Serif</option><option value="monospace">Mono</option><option value="Impact, sans-serif">Impact</option><option value="'Trebuchet MS', sans-serif">Trebuchet</option></select></label>
-            <label>Camera filter <select id="st-filter"><option value="none">None</option><option value="bw">Black &amp; white</option><option value="sepia">Sepia</option><option value="warm">Warm</option><option value="cool">Cool</option><option value="vivid">Vivid</option><option value="purple">Purple</option></select></label>
-            <label class="switch"><input type="checkbox" id="st-touch"> Touch up appearance (soft)</label>
-            <label>Overlay frame (PNG with transparency) <input id="st-overlay-file" type="file" accept="image/png,image/webp"></label>
-            <label class="switch"><input type="checkbox" id="st-overlay-on"> Show overlay</label>
             <label class="switch"><input type="checkbox" id="st-cap"> Live captions</label>
             <label>Caption language <select id="st-cap-lang"><option value="hi-IN">Hindi</option><option value="en-IN">English (India)</option><option value="en-US">English (US)</option></select></label>
-            <label>Scrolling ticker <input id="st-ticker" maxlength="200" placeholder="Breaking news text..."></label>
-            <label>Standby text <input id="st-standby" maxlength="80" placeholder="We will be back shortly"></label>
-            <h3>Send to</h3>
-            <div id="st-dests" class="stack"></div>
-            <label>Quality <select id="st-quality"><option value="720">720p (recommended)</option><option value="480">480p (slow internet)</option><option value="1080">1080p (strong computer + internet)</option></select></label>
-            <div class="row"><button id="st-rec" class="ghost">● Record</button><button id="st-start">Go live</button><button id="st-stop" class="danger hidden">Stop</button></div>
-          </div>
+            <p class="sub">Keys: 1-9 scenes, arrows change media, D draw, C clear drawing, S snapshot, M mute mic.</p>
+          </section>
+<section class="panel" data-panelbody="chat">
+            <h3>Live chat</h3>
+            <p class="muted">Read chat from YouTube and Twitch here and press Show to put a message on the stream. Facebook chat is not available.</p>
+                    <div class="row"><select id="chat-yt"></select><button id="chat-yt-go" class="ghost">Start YouTube chat</button><input id="chat-twitch" placeholder="Twitch channel" maxlength="25"><button id="chat-twitch-go" class="ghost">Start Twitch chat</button></div>
+                    <ul id="chat-list" class="list scroll"></ul>
+          </section>
+<section class="panel" data-panelbody="notes">
+            <h3>Private notes</h3>
+            <p class="muted">Only you see this. It is not on the stream.</p>
+            <textarea id="st-notes" rows="6" placeholder="Your script or points..." class="notes"></textarea>
+                    <div class="row"><label class="switch"><input type="checkbox" id="st-tele"> Auto-scroll</label><input id="st-tele-speed" class="w140" type="range" min="2" max="40" value="10"></div>
+          </section>
+          </aside>
+          <nav class="st-rail" id="st-rail">
+            <button class="rail-btn" data-panel="sources" title="Camera"><span class="ico">&#127909;</span><span class="lbl">Camera</span></button>
+            <button class="rail-btn" data-panel="media" title="Clips"><span class="ico">&#127902;</span><span class="lbl">Clips</span></button>
+            <button class="rail-btn" data-panel="audio" title="Audio"><span class="ico">&#127898;</span><span class="lbl">Audio</span></button>
+            <button class="rail-btn" data-panel="guests" title="Guests"><span class="ico">&#128101;</span><span class="lbl">Guests</span></button>
+            <button class="rail-btn" data-panel="scenes" title="Scenes"><span class="ico">&#127916;</span><span class="lbl">Scenes</span></button>
+            <button class="rail-btn" data-panel="background" title="Backdrop"><span class="ico">&#128444;</span><span class="lbl">Backdrop</span></button>
+            <button class="rail-btn" data-panel="colour" title="Colour"><span class="ico">&#127912;</span><span class="lbl">Colour</span></button>
+            <button class="rail-btn" data-panel="position" title="Position"><span class="ico">&#8596;</span><span class="lbl">Position</span></button>
+            <button class="rail-btn" data-panel="graphics" title="Graphics"><span class="ico">&#10024;</span><span class="lbl">Graphics</span></button>
+            <button class="rail-btn" data-panel="tools" title="Tools"><span class="ico">&#9998;</span><span class="lbl">Tools</span></button>
+            <button class="rail-btn" data-panel="chat" title="Chat"><span class="ico">&#128172;</span><span class="lbl">Chat</span></button>
+            <button class="rail-btn" data-panel="notes" title="Notes"><span class="ico">&#128221;</span><span class="lbl">Notes</span></button>
+          </nav>
         </div>
-      </section>
-
-      <section class="card wide" id="notes-card" data-tab="studio">
-        <h2>Private notes / teleprompter</h2>
-        <p class="muted">Only you see this. It is not on the stream.</p>
-        <textarea id="st-notes" rows="6" placeholder="Your script or points..." class="notes"></textarea>
-        <div class="row"><label class="switch"><input type="checkbox" id="st-tele"> Auto-scroll</label><input id="st-tele-speed" class="w140" type="range" min="2" max="40" value="10"></div>
-      </section>
-
-      <section class="card wide" id="chat-card" data-tab="studio">
-        <h2>Live chat (all in one place)</h2>
-        <p class="muted">Read chat from YouTube and Twitch here and press Show to put a message on the stream. Facebook chat is not available.</p>
-        <div class="row"><select id="chat-yt"></select><button id="chat-yt-go" class="ghost">Start YouTube chat</button><input id="chat-twitch" placeholder="Twitch channel" maxlength="25"><button id="chat-twitch-go" class="ghost">Start Twitch chat</button></div>
-        <ul id="chat-list" class="list scroll"></ul>
-      </section>
-
-      <section class="card" data-tab="studio">
-        <h2>Use OBS instead</h2>
-        <p class="muted">In OBS: Settings &rarr; Stream &rarr; Service: Custom.</p>
-        <label>Server <div class="copy-row"><input id="ingest-url" readonly><button data-copy="ingest-url" class="ghost">Copy</button></div></label>
-        <label>Stream key <div class="copy-row"><input id="ingest-key" type="password" readonly><button id="toggle-key" class="ghost">Show</button><button data-copy="ingest-key" class="ghost">Copy</button></div></label>
-        <p><span id="ingest-badge" class="badge">Not receiving</span> <span id="mtx-badge" class="badge warn hidden">Relay engine offline</span></p>
-        <button id="rotate" class="ghost">Generate new stream key</button>
-        <form id="phone-form" class="stack">
-          <label>My WhatsApp number for alerts <input name="phone" id="phone" inputmode="tel" placeholder="919876543210"></label>
-          <button type="submit" class="ghost">Save number</button>
-          <p id="phone-note" class="sub"></p>
-        </form>
       </section>
 
       <section class="card" data-tab="destinations" id="connect-card">
@@ -213,15 +228,7 @@
         <h2>Destinations</h2>
         <ul id="dest-list" class="list"></ul>
         <p id="dest-empty" class="muted hidden">No destinations yet. Add one below.</p>
-        <form id="dest-form" class="stack">
-          <h3>Add destination</h3>
-          <label>Platform <select name="platform" id="platform"></select></label>
-          <label>Name <input name="name" placeholder="e.g. News channel (YouTube)" required maxlength="80"></label>
-          <label>Server URL <input name="rtmp_url" id="rtmp-url" placeholder="rtmp://..." required></label>
-          <label>Stream key <input name="stream_key" type="password" autocomplete="off" required></label>
-          <button type="submit">Add destination</button>
-          <p id="dest-error" class="error"></p>
-        </form>
+        <button data-open="dlg-dest" class="">+ Add destination</button>
       </section>
 
       <section class="card" data-tab="videos">
@@ -230,31 +237,14 @@
         <p id="storage" class="sub"></p>
         <ul id="video-list" class="list"></ul>
         <p id="video-empty" class="muted hidden">No videos yet.</p>
-        <form id="upload-form" class="stack">
-          <label>Video file <input type="file" name="file" accept="video/*,.mkv,.ts,.flv" required></label>
-          <button type="submit" id="upload-btn">Upload</button>
-          <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
-          <p id="upload-status" class="sub"></p>
-        </form>
+        <button data-open="dlg-upload" class="">Upload a video</button>
       </section>
 
       <section class="card" data-tab="videos">
         <h2>Schedule a live</h2>
         <ul id="schedule-list" class="list"></ul>
         <p id="schedule-empty" class="muted hidden">Nothing scheduled.</p>
-        <form id="schedule-form" class="stack">
-          <h3>New schedule</h3>
-          <label>Title <input name="title" maxlength="80" placeholder="optional"></label>
-          <fieldset><legend>Videos (played in the order you tick them)</legend><div id="sched-videos" class="checks"></div></fieldset>
-          <label>Start time (your local time) <input name="start" id="sched-start" type="datetime-local" required></label>
-          <label>Repeat <input name="loops" type="number" min="0" max="50" value="1"></label>
-          <p class="sub">0 = keep repeating until you stop it (24x7 channel).</p>
-          <fieldset><legend>Send to</legend><div id="sched-dests" class="checks"></div></fieldset>
-          <p class="sub">If none is ticked, all enabled destinations are used.</p>
-          <label class="switch"><input type="checkbox" name="delete_after" checked> Delete the video after the live ends</label>
-          <button type="submit">Schedule</button>
-          <p id="sched-error" class="error"></p>
-        </form>
+        <button data-open="dlg-schedule" class="">+ New schedule</button>
       </section>
 
       <section class="card" data-tab="recordings">
@@ -274,20 +264,10 @@
           <button id="standby-save" class="ghost">Save standby settings</button>
           <p class="sub">Turn this off before you end a stream on purpose in OBS, otherwise the standby screen keeps running until the time is up. You can also press Stop standby on the Go live tab.</p>
         </div>
-        <form id="pw-form" class="stack">
-          <h3>Change password</h3>
-          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
-          <label>New password (8+ characters) <input name="new" type="password" minlength="8" autocomplete="new-password" required></label>
-          <button type="submit" class="ghost">Change password</button>
-          <p id="pw-note" class="sub"></p>
-        </form>
+        <button data-open="dlg-pw" class="ghost">Change password</button>
         <h3>API keys (for other software, e.g. Vividora)</h3>
         <ul id="key-list" class="list"></ul>
-        <form id="key-form" class="stack">
-          <label>Key name <input name="name" maxlength="80" placeholder="Vividora" required></label>
-          <button type="submit" class="ghost">Create API key</button>
-          <p id="key-error" class="error"></p>
-        </form>
+        <button data-open="dlg-key" class="ghost">Create API key</button>
         <div id="key-new" class="hidden">
           <p class="sub">Copy this key now. It is shown only once.</p>
           <div class="copy-row"><input id="key-new-value" readonly><button data-copy="key-new-value" class="ghost">Copy</button></div>
@@ -297,15 +277,7 @@
       <section class="card" id="team-card" data-tab="settings">
         <h2>Team</h2>
         <ul id="user-list" class="list"></ul>
-        <form id="user-form" class="stack">
-          <h3>Add team member</h3>
-          <label>Name <input name="name" required maxlength="80"></label>
-          <label>Email <input name="email" type="email" required></label>
-          <label>Password <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
-          <label>Role <select name="role"><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
-          <button type="submit">Add member</button>
-          <p id="user-error" class="error"></p>
-        </form>
+        <button data-open="dlg-user" class="">+ Add team member</button>
       </section>
 
       <section class="card" data-tab="activity">
@@ -313,9 +285,92 @@
         <ul id="activity" class="list small"></ul>
       </section>
     </main>
+
+  <dialog class="modal" id="dlg-golive"><div class="modal-head"><h2>Go live</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<p class="muted">Pick where to stream. Camera or screen must be on first.</p>
+<div id="st-dests" class="stack"></div>
+<label>Quality <select id="st-quality"><option value="720">720p (recommended)</option><option value="480">480p (slow internet)</option><option value="1080">1080p (strong computer + internet)</option></select></label>
+<p id="dlg-msg" class="error"></p>
+</div><div class="modal-foot"><button class="ghost" data-close>Cancel</button><button id="st-start">Start streaming</button></div></dialog>
+  <dialog class="modal" id="dlg-settings"><div class="modal-head"><h2>Studio settings</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<label>Output <select id="st-orient"><option value="landscape">Landscape 16:9 (YouTube, Facebook)</option><option value="portrait">Portrait 9:16 (Shorts, Reels)</option></select></label>
+<label>Camera size <select id="st-camres"><option value="1280x720">720p</option><option value="1920x1080">1080p (sharper zoom)</option><option value="640x480">480p</option></select></label>
+<label>Camera frames <select id="st-camfps"><option value="30">30 fps</option><option value="24">24 fps</option><option value="60">60 fps</option><option value="15">15 fps</option></select></label>
+<p class="sub">Output cannot change while live or recording. Camera size and frames apply when you press "Camera + mic" again.</p>
+</div><div class="modal-foot"><button data-close>Done</button></div></dialog>
+  <dialog class="modal" id="dlg-obs"><div class="modal-head"><h2>Use OBS instead</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<p class="muted">In OBS: Settings &rarr; Stream &rarr; Service: Custom.</p>
+        <label>Server <div class="copy-row"><input id="ingest-url" readonly><button data-copy="ingest-url" class="ghost">Copy</button></div></label>
+        <label>Stream key <div class="copy-row"><input id="ingest-key" type="password" readonly><button id="toggle-key" class="ghost">Show</button><button data-copy="ingest-key" class="ghost">Copy</button></div></label>
+        <p><span id="ingest-badge" class="badge">Not receiving</span> <span id="mtx-badge" class="badge warn hidden">Relay engine offline</span></p>
+        <button id="rotate" class="ghost">Generate new stream key</button>
+        <form id="phone-form" class="stack">
+          <label>My WhatsApp number for alerts <input name="phone" id="phone" inputmode="tel" placeholder="919876543210"></label>
+          <button type="submit" class="ghost">Save number</button>
+          <p id="phone-note" class="sub"></p>
+        </form>
+</div><div class="modal-foot"><button data-close>Done</button></div></dialog>
+  <dialog class="modal" id="dlg-dest"><div class="modal-head"><h2>Add destination</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="dest-form" class="stack">
+          <label>Platform <select name="platform" id="platform"></select></label>
+          <label>Name <input name="name" placeholder="e.g. News channel (YouTube)" required maxlength="80"></label>
+          <label>Server URL <input name="rtmp_url" id="rtmp-url" placeholder="rtmp://..." required></label>
+          <label>Stream key <input name="stream_key" type="password" autocomplete="off" required></label>
+          <button type="submit">Add destination</button>
+          <p id="dest-error" class="error"></p>
+        </form>
+</div></dialog>
+  <dialog class="modal" id="dlg-upload"><div class="modal-head"><h2>Upload a video</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="upload-form" class="stack">
+          <label>Video file <input type="file" name="file" accept="video/*,.mkv,.ts,.flv" required></label>
+          <button type="submit" id="upload-btn">Upload</button>
+          <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
+          <p id="upload-status" class="sub"></p>
+        </form>
+</div></dialog>
+  <dialog class="modal" id="dlg-schedule"><div class="modal-head"><h2>Schedule a live</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="schedule-form" class="stack">
+          <label>Title <input name="title" maxlength="80" placeholder="optional"></label>
+          <fieldset><legend>Videos (played in the order you tick them)</legend><div id="sched-videos" class="checks"></div></fieldset>
+          <label>Start time (your local time) <input name="start" id="sched-start" type="datetime-local" required></label>
+          <label>Repeat <input name="loops" type="number" min="0" max="50" value="1"></label>
+          <p class="sub">0 = keep repeating until you stop it (24x7 channel).</p>
+          <fieldset><legend>Send to</legend><div id="sched-dests" class="checks"></div></fieldset>
+          <p class="sub">If none is ticked, all enabled destinations are used.</p>
+          <label class="switch"><input type="checkbox" name="delete_after" checked> Delete the video after the live ends</label>
+          <button type="submit">Schedule</button>
+          <p id="sched-error" class="error"></p>
+        </form>
+</div></dialog>
+  <dialog class="modal" id="dlg-user"><div class="modal-head"><h2>Add team member</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="user-form" class="stack">
+          <label>Name <input name="name" required maxlength="80"></label>
+          <label>Email <input name="email" type="email" required></label>
+          <label>Password <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+          <label>Role <select name="role"><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
+          <button type="submit">Add member</button>
+          <p id="user-error" class="error"></p>
+        </form>
+</div></dialog>
+  <dialog class="modal" id="dlg-key"><div class="modal-head"><h2>Create API key</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="key-form" class="stack">
+          <label>Key name <input name="name" maxlength="80" placeholder="Vividora" required></label>
+          <button type="submit" class="ghost">Create API key</button>
+          <p id="key-error" class="error"></p>
+        </form>
+</div></dialog>
+  <dialog class="modal" id="dlg-pw"><div class="modal-head"><h2>Change password</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="pw-form" class="stack">
+          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+          <label>New password (8+ characters) <input name="new" type="password" minlength="8" autocomplete="new-password" required></label>
+          <button type="submit" class="ghost">Change password</button>
+          <p id="pw-note" class="sub"></p>
+        </form>
+</div></dialog>
+  <div id="toasts" popover="manual"></div>
   </div>
-  <script src="/app.js?v=10" type="module"></script>
-  <script src="/studio.js?v=10" type="module"></script>
-  <script src="/nav.js?v=10" type="module"></script>
+  <script src="/app.js?v=11" type="module"></script>
+  <script src="/studio.js?v=11" type="module"></script>
+  <script src="/nav.js?v=11" type="module"></script>
 </body>
 </html>

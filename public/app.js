@@ -253,6 +253,7 @@ async function uploadFile(file, onProgress) {
   await api('POST', `/api/uploads/${id}/complete`);
 }
 
+const closeDlg = (id) => { const d = $(id); if (d?.open) d.close(); };
 $('upload-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (uploading) return;
@@ -267,6 +268,7 @@ $('upload-form').addEventListener('submit', async (e) => {
     await uploadFile(file, (p) => { bar.value = Math.round(p * 100); $('upload-status').textContent = `Uploading… ${Math.round(p * 100)}%`; });
     $('upload-status').textContent = 'Uploaded. The server is checking the video (long files can take a while).';
     e.target.reset();
+    setTimeout(() => closeDlg('dlg-upload'), 1200);
   } catch (err) { $('upload-status').textContent = `Upload failed: ${err.message}`; }
   uploading = false;
   $('upload-btn').disabled = false;
@@ -294,6 +296,7 @@ $('schedule-form').addEventListener('submit', async (e) => {
     pickedVideos = [];
     $('sched-videos').dataset.sig = '';
     e.target.elements.title.value = '';
+    closeDlg('dlg-schedule');
     await refresh();
   } catch (err) { $('sched-error').textContent = err.message; }
 });
@@ -372,6 +375,7 @@ $('key-form').addEventListener('submit', async (e) => {
     $('key-new-value').value = token;
     $('key-new').classList.remove('hidden');
     e.target.reset();
+    closeDlg('dlg-key');
     await refreshKeys();
   } catch (err) { $('key-error').textContent = err.message; }
 });
@@ -410,6 +414,7 @@ $('dest-form').addEventListener('submit', async (e) => {
     });
     e.target.querySelector('[name=name]').value = '';
     e.target.querySelector('[name=stream_key]').value = '';
+    closeDlg('dlg-dest');
     await refresh();
   } catch (err) { $('dest-error').textContent = err.message; }
 });
@@ -421,6 +426,7 @@ $('user-form').addEventListener('submit', async (e) => {
   try {
     await api('POST', '/api/users', Object.fromEntries(f.entries()));
     e.target.reset();
+    closeDlg('dlg-user');
     await refreshUsers();
   } catch (err) { $('user-error').textContent = err.message; }
 });

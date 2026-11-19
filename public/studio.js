@@ -8,7 +8,13 @@ let hostWs = null;
 
 const st = { cam: null, screen: null, scene: 'cam', logo: null, ws: null, rec: null, live: false, audioCtx: null, dest: null, mixed: new Map(), gains: new Map(), analysers: new Map(), labels: new Map(), micStreams: new Map(), levels: new Map(), raw: new Map(), extras: [], mainExtra: -1, spk: '', spkAt: 0, t0: 0, timerEnd: 0 };
 const vid = (stream) => { const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {}); return v; };
-const say = (m) => { $('st-msg').textContent = m || ''; };
+function toast(m) {
+  const box = $('toasts'); if (!m || !box) return;
+  const d = document.createElement('div'); d.className = 'toast'; d.textContent = m; box.append(d);
+  try { if (!box.matches(':popover-open')) box.showPopover(); } catch { /* old browser: message line still shows it */ }
+  setTimeout(() => { d.remove(); if (!box.children.length) { try { box.hidePopover(); } catch { /* ignore */ } } }, 4500);
+}
+const say = (m) => { $('st-msg').textContent = m || ''; const d = $('dlg-msg'); if (d) d.textContent = m || ''; if (m) toast(m); };
 const badge = (t, cls = '') => { const b = $('st-badge'); b.textContent = t; b.className = `badge ${cls}`; };
 
 function ensureAudio() {
@@ -33,6 +39,11 @@ function addAudio(stream, key) {
 function removeAudio(key) {
   st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect(); st.mixed.delete(key); st.gains.delete(key); st.analysers.delete(key);
   stopStream(st.micStreams.get(key)); st.micStreams.delete(key); st.labels.delete(key); renderMixer();
+}
+function toggleMic() {
+  const g = st.gains.get('cam'); if (!g) return say('Turn on the camera + mic first.');
+  g.muted = !g.muted; g.gain.value = g.muted ? 0 : g.userVolume; renderMixer();
+  $('st-mute').textContent = g.muted ? 'Unmute microphone' : 'Mute microphone'; say(g.muted ? 'Microphone muted' : 'Microphone on');
 }
 function updateLevels() {
   st.raw.clear();
@@ -739,7 +750,7 @@ function goLive() {
       };
       rec.start(1000); st.rec = rec; st.live = true; st.t0 = Date.now();
       badge('LIVE', 'ok'); say('Streaming. Check YouTube Studio / Facebook in a few seconds.');
-      $('st-stop').classList.remove('hidden'); $('st-start').classList.add('hidden'); $('st-start').disabled = false;
+      $('st-stop').classList.remove('hidden'); $('st-golive-open').classList.add('hidden'); $('st-start').disabled = false; $('dlg-golive').close();
     } else if (m.type === 'error') { say(m.message); } else if (m.type === 'ended') { cleanup(m.reason); }
   };
   ws.onclose = () => cleanup(st.live ? 'Connection lost' : '');
@@ -749,7 +760,7 @@ function cleanup(reason) {
   try { if (st.rec && st.rec.state !== 'inactive') st.rec.stop(); } catch { /* ignore */ }
   st.rec = null; st.live = false;
   badge('Off'); if (reason) say(reason);
-  $('st-stop').classList.add('hidden'); $('st-start').classList.remove('hidden'); $('st-start').disabled = false;
+  $('st-stop').classList.add('hidden'); $('st-golive-open').classList.remove('hidden'); $('st-start').disabled = false;
   try { st.ws?.close(); } catch { /* ignore */ }
   st.ws = null;
 }
@@ -874,7 +885,7 @@ function init() {
     else if (e.key.toLowerCase() === 'd') $('st-draw').click();
     else if (e.key.toLowerCase() === 'c') $('st-clear').click();
     else if (e.key.toLowerCase() === 's') $('st-snap').click();
-    else if (e.key.toLowerCase() === 'm') { const g = st.gains.get('cam'); if (g) { g.muted = !g.muted; g.gain.value = g.muted ? 0 : g.userVolume; renderMixer(); say(g.muted ? 'Microphone muted' : 'Microphone on'); } }
+    else if (e.key.toLowerCase() === 'm') toggleMic();
   });
   $('st-orient').addEventListener('change', (e) => { setOrientation(e.target.value === 'portrait'); if (st.live || local) e.target.value = H > W ? 'portrait' : 'landscape'; });
   $('st-music-files').addEventListener('change', (e) => { music.items = [...e.target.files]; music.i = 0; renderMusic(); if (music.items.length) playMusic(); });
@@ -904,6 +915,7 @@ function init() {
     const v = mainCam(); if (!v) return; if (v.paused) { v.play(); $('st-freeze').textContent = 'Freeze camera'; } else { v.pause(); $('st-freeze').textContent = 'Unfreeze camera'; }
   });
   $('st-sticker-file').addEventListener('change', (e) => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { stickerImg = img; }; img.src = URL.createObjectURL(f); });
+  $('st-mute').addEventListener('click', toggleMic);
   $('st-addcam').addEventListener('click', addCamera);
   $('st-addmic').addEventListener('click', addMic);
   $('st-media-loop').addEventListener('change', (e) => { if (media.el?.pause) media.el.loop = e.target.checked; });

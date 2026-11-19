@@ -196,3 +196,8 @@ If the app restarts with "unable to open database file", the data folder belongs
 - A phone can be used as another camera: send it the guest invite link.
 - Not built: IP camera input, motion detection, game/desktop capture drivers, virtual webcam (browser limits).
 - The page uses a strict CSP: never use inline `style="..."` attributes, use classes in style.css.
+
+### Dashboard layout
+- Studio: preview in the middle, scene buttons below it, icon rail on the right (Camera, Clips, Audio, Guests, Scenes, Backdrop, Colour, Position, Graphics, Tools, Chat, Notes) opening one side panel at a time.
+- Popups: Go live (destinations + quality), Studio settings (output orientation, camera size), OBS setup, Add destination, Upload video, New schedule, Add team member, API key, Change password.
+- Toast messages appear bottom-right (also over popups). On small screens the rail becomes a bar under the preview.
