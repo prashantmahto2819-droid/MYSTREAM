@@ -1,8 +1,8 @@
 // Browser studio: draws scenes + overlays on a canvas, records it with MediaRecorder and streams
 // the chunks over a WebSocket to the server, which turns them into RTMP (see src/studio.js).
 const $ = (id) => document.getElementById(id);
-const W = 1280; const H = 720;
-const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['media', 'Clip'], ['speaker', 'Speaker'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['cams', 'All cameras'], ['standby', 'Standby']];
+let W = 1280; let H = 720;
+const SCENES = [['cam', 'Camera'], ['screen', 'Screen'], ['pip', 'Screen + camera'], ['side', 'Side by side'], ['media', 'Clip'], ['speaker', 'Speaker'], ['guest', 'Guest'], ['grid', 'Host + guests'], ['cams', 'All cameras'], ['countdown', 'Countdown'], ['standby', 'Standby']];
 const guests = new Map(); // id -> { name, pc, video }
 let hostWs = null;
 
@@ -143,10 +143,10 @@ function cover(ctx, v, x, y, w, h) {
   ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   ctx.drawImage(v, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh); ctx.restore();
 }
-function contain(ctx, v, w, h) {
+function contain(ctx, v, w, h, x0 = 0, y0 = 0) {
   const [vw0, vh0] = dims(v); const vw = vw0 || w; const vh = vh0 || h;
   const s = Math.min(w / vw, h / vh);
-  ctx.drawImage(v, (w - vw * s) / 2, (h - vh * s) / 2, vw * s, vh * s);
+  ctx.drawImage(v, x0 + (w - vw * s) / 2, y0 + (h - vh * s) / 2, vw * s, vh * s);
 }
 
 // ---- media scene (video / images / slides from your computer) ----
@@ -176,18 +176,88 @@ function showMedia() {
   $('st-media-name').textContent = `${media.i + 1}/${media.items.length}  ${f.name}`;
   setScene('media'); renderClips();
 }
+let overlayImg = null;
+// ---- background music ----
+const music = { items: [], i: 0, el: null };
+function renderMusic() {
+  const ul = $('st-music-list'); ul.replaceChildren();
+  music.items.forEach((f, i) => {
+    const li = document.createElement('li'); const d = document.createElement('div'); d.className = 'grow'; d.textContent = f.name;
+    const b = document.createElement('button'); b.className = i === music.i && music.el && !music.el.paused ? '' : 'ghost'; b.textContent = i === music.i && music.el && !music.el.paused ? 'Playing' : 'Play';
+    b.addEventListener('click', () => { music.i = i; playMusic(); });
+    li.append(d, b); ul.append(li);
+  });
+}
+function playMusic() {
+  const f = music.items[music.i]; if (!f) return;
+  music.el?.pause(); removeAudio('music');
+  const a = new Audio(URL.createObjectURL(f)); a.loop = music.items.length === 1;
+  a.addEventListener('ended', () => { music.i = (music.i + 1) % music.items.length; playMusic(); });
+  try { ensureAudio(); st.audioCtx.resume(); addNode(st.audioCtx.createMediaElementSource(a), 'music'); st.gains.get('music').gain.value = 0.35; st.gains.get('music').userVolume = 0.35; renderMixer(); } catch { /* ignore */ }
+  a.play().catch(() => {}); music.el = a; renderMusic();
+}
+// ---- saved scenes (stored in this browser) ----
+const SCENE_FIELDS = ['st-lower', 'st-ticker', 'st-standby', 'st-theme', 'st-font', 'st-filter', 'st-timer', 'st-bg', 'st-bg-color', 'st-bright', 'st-contrast', 'st-sat'];
+const SCENE_CHECKS = ['st-mirror', 'st-touch'];
+const loadSaved = () => { try { return JSON.parse(localStorage.getItem('vs_scenes') || '[]'); } catch { return []; } };
+function renderSaved() {
+  const ul = $('st-saved'); ul.replaceChildren();
+  loadSaved().forEach((sc, i) => {
+    const li = document.createElement('li'); const d = document.createElement('div'); d.className = 'grow'; d.textContent = sc.name;
+    const ap = document.createElement('button'); ap.textContent = 'Apply'; ap.addEventListener('click', () => applySaved(sc));
+    const rm = document.createElement('button'); rm.className = 'danger'; rm.textContent = 'x';
+    rm.addEventListener('click', () => { const all = loadSaved(); all.splice(i, 1); try { localStorage.setItem('vs_scenes', JSON.stringify(all)); } catch { /* ignore */ } renderSaved(); });
+    li.append(d, ap, rm); ul.append(li);
+  });
+}
+function applySaved(sc) {
+  for (const id of SCENE_FIELDS) if (sc.f[id] !== undefined) { $(id).value = sc.f[id]; $(id).dispatchEvent(new Event('change')); $(id).dispatchEvent(new Event('input')); }
+  for (const id of SCENE_CHECKS) if (sc.c[id] !== undefined) $(id).checked = sc.c[id];
+  if (sc.scene) setScene(sc.scene);
+}
+function saveScene() {
+  const name = (window.prompt('Name this scene (look + layout + text):') || '').trim().slice(0, 40); if (!name) return;
+  const f = {}; const c = {}; for (const id of SCENE_FIELDS) f[id] = $(id).value; for (const id of SCENE_CHECKS) c[id] = $(id).checked;
+  const all = loadSaved().filter((x) => x.name !== name); all.push({ name, scene: st.scene, f, c });
+  try { localStorage.setItem('vs_scenes', JSON.stringify(all.slice(-20))); } catch { say('Could not save in this browser.'); }
+  renderSaved();
+}
+let teleTimer = null;
 const pen = { on: false, strokes: [], cur: null };
 let chatMsg = null;
 
 // ---- layout the user can drag on the preview ----
-const layout = { pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 } };
+const makeLayout = () => ({ pip: { x: W - 344, y: H - 204, w: 320 }, lower: { x: 40, y: H - 190 }, logo: { x: W - 200, y: 24, h: 90 }, timer: { x: 24, y: 24 }, chat: { x: 40, y: H - 280 } });
+const layout = makeLayout();
+function setOrientation(portrait) {
+  if (st.live || local) return say('Stop the live / recording before changing orientation.');
+  W = portrait ? 720 : 1280; H = portrait ? 1280 : 720;
+  const c = $('st-canvas'); c.width = W; c.height = H;
+  c.style.aspectRatio = `${W} / ${H}`; c.style.maxHeight = portrait ? '70vh' : ''; c.style.width = portrait ? 'auto' : '100%'; c.style.margin = portrait ? '0 auto' : '';
+  Object.assign(layout, makeLayout());
+}
+// ---- look: themes, fonts, filters ----
+const THEMES = {
+  air: { fill: 'rgba(0,0,0,.65)', text: '#fff', accent: '#ffcc00', round: 0, bar: 'rgba(180,0,0,.9)', barText: '#fff' },
+  base: { fill: 'rgba(255,255,255,.95)', text: '#111', accent: '#2563eb', round: 0, bar: 'rgba(255,255,255,.95)', barText: '#111' },
+  news: { fill: '#c1121f', text: '#fff', accent: '#fff', round: 0, bar: '#c1121f', barText: '#fff' },
+  round: { fill: 'rgba(0,0,0,.8)', text: '#fff', accent: '#22d3ee', round: 30, bar: 'rgba(0,0,0,.8)', barText: '#fff' },
+};
+const theme = () => THEMES[$('st-theme').value] || THEMES.air;
+const fnt = (n) => `bold ${n}px ${$('st-font').value || 'sans-serif'}`;
+function plate(ctx, x, y, w, h, fill, round) {
+  ctx.fillStyle = fill;
+  if (round && ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, round); ctx.fill(); } else ctx.fillRect(x, y, w, h);
+}
+const FILTERS = { none: '', bw: 'grayscale(1)', sepia: 'sepia(.85)', warm: 'sepia(.35) saturate(1.3) hue-rotate(-10deg)', cool: 'saturate(1.1) hue-rotate(15deg) brightness(1.03)', vivid: 'saturate(1.7) contrast(1.1)', purple: 'hue-rotate(250deg) saturate(1.4)' };
 let hits = []; let drag = null;
 const toCanvas = (e) => { const r = $('st-canvas').getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
 const hitAt = (x, y) => [...hits].reverse().find((h) => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
 function drawCamera(ctx, v, x, y, w, h) {
   const b = $('st-bright').value; const c = $('st-contrast').value; const sa = $('st-sat').value;
   ctx.save();
-  if (b !== '100' || c !== '100' || sa !== '100') ctx.filter = `brightness(${b}%) contrast(${c}%) saturate(${sa}%)`;
+  const f = [b !== '100' || c !== '100' || sa !== '100' ? `brightness(${b}%) contrast(${c}%) saturate(${sa}%)` : '', FILTERS[$('st-filter').value] || '', $('st-touch').checked ? 'blur(0.9px) brightness(1.06) saturate(1.05)' : ''].filter(Boolean).join(' ');
+  if (f) ctx.filter = f;
   if ($('st-mirror').checked) { ctx.translate(x + w / 2, 0); ctx.scale(-1, 1); ctx.translate(-(x + w / 2), 0); }
   cover(ctx, keyed(v), x, y, w, h);
   ctx.restore();
@@ -304,6 +374,41 @@ function drawSpeaker(ctx, now) {
   const th = Math.min(169, Math.floor(H / Math.max(1, others.length)) - 6);
   others.forEach((p, i) => drawTile(ctx, p, bw + 6, i * (th + 6) + 3, strip - 9, th, (st.levels.get(p.key) || 0) > 0.04));
 }
+function drawSide(ctx, main) {
+  const gs = [...guests.values()].find((g) => g.video && g.video.videoWidth);
+  const first = st.screenVideo ? { v: st.screenVideo, fit: true } : media.el ? { v: media.el, fit: true } : gs ? { v: gs.video } : st.extras[0] ? { v: st.extras[0].video, cam: true } : null;
+  const port = H > W;
+  const a = port ? [0, 0, W, H / 2 - 2] : [0, 0, W / 2 - 2, H]; const b = port ? [0, H / 2 + 2, W, H / 2 - 2] : [W / 2 + 2, 0, W / 2 - 2, H];
+  if (first) { if (first.fit) contain(ctx, first.v, a[2], a[3], a[0], a[1]); else if (first.cam) drawCamera(ctx, first.v, ...a); else cover(ctx, first.v, ...a); }
+  else { ctx.fillStyle = '#222'; ctx.fillRect(...a); ctx.fillStyle = '#aaa'; ctx.textAlign = 'center'; ctx.font = fnt(28); ctx.fillText('Share screen, play a clip or wait for a guest', a[0] + a[2] / 2, a[1] + a[3] / 2, a[2] - 40); ctx.textAlign = 'left'; }
+  if (main) drawCamera(ctx, main, ...b);
+}
+function drawCountdown(ctx) {
+  const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#0f172a'); g.addColorStop(1, '#4c1d95'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const left = st.timerEnd ? Math.max(0, Math.ceil((st.timerEnd - Date.now()) / 1000)) : -1;
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+  ctx.font = fnt(Math.round(W / 22)); ctx.fillText($('st-standby').value || 'Starting soon', W / 2, H / 2 - H * 0.12, W - 80);
+  ctx.font = fnt(Math.round(W / 6)); ctx.fillText(left < 0 ? '--:--' : `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`, W / 2, H / 2 + H * 0.12, W - 80);
+  ctx.textAlign = 'left';
+  if (left === 0 && st.timerEnd && $('st-timer-auto').checked) { st.timerEnd = 0; setScene('cam'); }
+}
+// ---- live captions (browser speech recognition) ----
+const cap = { rec: null, text: '', at: 0 };
+function startCaptions() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { $('st-cap').checked = false; return say('Captions need Chrome or Edge.'); }
+  const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = $('st-cap-lang').value;
+  r.onresult = (e) => { let t = ''; for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript; cap.text = t.trim(); cap.at = Date.now(); };
+  r.onend = () => { if ($('st-cap').checked) { try { r.start(); } catch { /* ignore */ } } };
+  r.onerror = (e) => { if (e.error === 'not-allowed') { $('st-cap').checked = false; say('Allow the microphone for captions.'); } };
+  try { r.start(); cap.rec = r; } catch { /* ignore */ }
+}
+function stopCaptions() { const r = cap.rec; cap.rec = null; try { r?.stop(); } catch { /* ignore */ } cap.text = ''; }
+function wrapText(ctx, text, maxW) {
+  const lines = []; let line = '';
+  for (const w of text.split(/\s+/)) { const t = line ? `${line} ${w}` : w; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; }
+  if (line) lines.push(line); return lines.slice(-2);
+}
 function draw(now) {
   const c = $('st-canvas'); const ctx = c.getContext('2d');
   hits = [];
@@ -319,6 +424,8 @@ function draw(now) {
     contain(ctx, st.screenVideo, W, H);
     if (main) drawPip(ctx, main);
   } else if (scene === 'speaker') drawSpeaker(ctx, now);
+  else if (scene === 'side') drawSide(ctx, main);
+  else if (scene === 'countdown') drawCountdown(ctx);
   else if (scene === 'cams') {
     const all = [st.camVideo, ...st.extras.map((x) => x.video)].filter((v) => v && v.videoWidth);
     drawGrid(ctx, all.map((v) => ({ v, n: '', host: v === st.camVideo })), 'No cameras yet');
@@ -339,44 +446,55 @@ function draw(now) {
     ctx.fillStyle = '#aaa'; ctx.textAlign = 'center'; ctx.font = '32px sans-serif';
     ctx.fillText('Choose Camera or Share screen', W / 2, H / 2); ctx.textAlign = 'left';
   }
-  // overlays (not on standby, which has its own text)
-  if (st.logo && scene !== 'standby') {
+  // overlays (not on standby / countdown, which have their own text)
+  const bare = scene === 'standby' || scene === 'countdown';
+  const th = theme();
+  if (overlayImg && $('st-overlay-on').checked && !bare) ctx.drawImage(overlayImg, 0, 0, W, H);
+  if (st.logo && !bare) {
     const { x, y, h } = layout.logo; const w = st.logo.width * (h / st.logo.height);
     ctx.drawImage(st.logo, x, y, w, h); hits.push({ id: 'logo', x, y, w, h });
   }
   const lower = $('st-lower').value.trim();
-  if (lower && scene !== 'standby') {
+  if (lower && !bare) {
     const { x, y } = layout.lower;
-    ctx.font = 'bold 38px sans-serif'; const tw = Math.min(ctx.measureText(lower).width + 48, W - 120);
-    ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(x, y, tw, 64);
-    ctx.fillStyle = '#ffcc00'; ctx.fillRect(x, y, 8, 64);
-    ctx.fillStyle = '#fff'; ctx.fillText(lower, x + 24, y + 46, tw - 40);
+    ctx.font = fnt(38); const tw = Math.min(ctx.measureText(lower).width + 48, W - 80);
+    plate(ctx, x, y, tw, 64, th.fill, th.round);
+    if (!th.round) { ctx.fillStyle = th.accent; ctx.fillRect(x, y, 8, 64); }
+    ctx.fillStyle = th.text; ctx.fillText(lower, x + 24, y + 46, tw - 40);
     hits.push({ id: 'lower', x, y, w: tw, h: 64 });
   }
   const tm = $('st-timer').value;
-  if (tm !== 'none' && scene !== 'standby') {
+  if (tm !== 'none' && !bare) {
     let txt; let late = false;
     if (tm === 'clock') txt = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
     else if (!st.timerEnd) txt = '--:--';
     else { const left = Math.max(0, Math.ceil((st.timerEnd - Date.now()) / 1000)); late = left === 0; txt = `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`; }
-    ctx.font = 'bold 54px sans-serif'; const w = ctx.measureText(txt).width + 40; const { x, y } = layout.timer;
-    ctx.fillStyle = late ? 'rgba(180,0,0,.85)' : 'rgba(0,0,0,.65)'; ctx.fillRect(x, y, w, 76);
-    ctx.fillStyle = '#fff'; ctx.fillText(txt, x + 20, y + 56); hits.push({ id: 'timer', x, y, w, h: 76 });
+    ctx.font = fnt(54); const w = ctx.measureText(txt).width + 40; const { x, y } = layout.timer;
+    plate(ctx, x, y, w, 76, late ? 'rgba(180,0,0,.85)' : th.fill, th.round);
+    ctx.fillStyle = late ? '#fff' : th.text; ctx.fillText(txt, x + 20, y + 56); hits.push({ id: 'timer', x, y, w, h: 76 });
   }
-  if (chatMsg && chatMsg.until > Date.now() && scene !== 'standby') {
-    const { x, y } = layout.chat; ctx.font = 'bold 30px sans-serif';
+  if (chatMsg && chatMsg.until > Date.now() && !bare) {
+    const { x, y } = layout.chat; ctx.font = fnt(30);
     const line = `${chatMsg.author}: ${chatMsg.text}`; const w = Math.min(ctx.measureText(line).width + 48, W - 80);
-    ctx.fillStyle = 'rgba(255,255,255,.93)'; ctx.fillRect(x, y, w, 56);
-    ctx.fillStyle = '#111'; ctx.fillText(line, x + 24, y + 38, w - 40); hits.push({ id: 'chat', x, y, w, h: 56 });
+    plate(ctx, x, y, w, 56, th.fill, th.round);
+    ctx.fillStyle = th.text; ctx.fillText(line, x + 24, y + 38, w - 40); hits.push({ id: 'chat', x, y, w, h: 56 });
   }
   for (const stroke of pen.strokes) {
     ctx.strokeStyle = stroke.color; ctx.lineWidth = stroke.w; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
     stroke.pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); if (stroke.pts.length === 1) ctx.lineTo(stroke.pts[0][0] + 0.1, stroke.pts[0][1]); ctx.stroke();
   }
   const tick = $('st-ticker').value.trim();
-  if (tick && scene !== 'standby') {
-    ctx.fillStyle = 'rgba(180,0,0,.9)'; ctx.fillRect(0, H - 56, W, 56);
-    ctx.font = 'bold 30px sans-serif'; ctx.fillStyle = '#fff';
+  const barH = tick && !bare ? 56 : 0;
+  if (cap.text && Date.now() - cap.at < 4500 && !bare) {
+    ctx.font = fnt(Math.round(W / 36)); const lines = wrapText(ctx, cap.text, W - 120); const lh = Math.round(W / 36) + 12;
+    lines.forEach((ln, i) => {
+      const w = ctx.measureText(ln).width + 32; const y = H - barH - 20 - (lines.length - i) * lh;
+      ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect((W - w) / 2, y, w, lh); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText(ln, W / 2, y + lh - 12); ctx.textAlign = 'left';
+    });
+  }
+  if (tick && !bare) {
+    plate(ctx, 0, H - 56, W, 56, th.bar, 0);
+    ctx.font = fnt(30); ctx.fillStyle = th.barText;
     const tw = ctx.measureText(tick).width + 200; const x = W - ((now / 12) % (tw + W));
     ctx.fillText(tick, x, H - 16);
   }
@@ -541,7 +659,7 @@ function goLive() {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/studio/ws`);
   ws.binaryType = 'arraybuffer'; st.ws = ws;
   badge('Connecting…', 'warn'); $('st-start').disabled = true;
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'start', audio: hasAudio, height, dest_ids: ids }));
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'start', audio: hasAudio, height, portrait: H > W, dest_ids: ids }));
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === 'ready') {
@@ -686,6 +804,23 @@ function init() {
     else if (e.key === 'ArrowRight') $('st-media-next').click();
     else if (e.key === 'ArrowLeft') $('st-media-prev').click();
     else if (e.key.toLowerCase() === 'd') $('st-draw').click();
+    else if (e.key.toLowerCase() === 'c') $('st-clear').click();
+    else if (e.key.toLowerCase() === 's') $('st-snap').click();
+    else if (e.key.toLowerCase() === 'm') { const g = st.gains.get('cam'); if (g) { g.muted = !g.muted; g.gain.value = g.muted ? 0 : g.userVolume; renderMixer(); say(g.muted ? 'Microphone muted' : 'Microphone on'); } }
+  });
+  $('st-orient').addEventListener('change', (e) => { setOrientation(e.target.value === 'portrait'); if (st.live || local) e.target.value = H > W ? 'portrait' : 'landscape'; });
+  $('st-music-files').addEventListener('change', (e) => { music.items = [...e.target.files]; music.i = 0; renderMusic(); if (music.items.length) playMusic(); });
+  $('st-music-pause').addEventListener('click', () => { if (!music.el) return; if (music.el.paused) music.el.play(); else music.el.pause(); renderMusic(); });
+  $('st-music-next').addEventListener('click', () => { if (music.items.length) { music.i = (music.i + 1) % music.items.length; playMusic(); } });
+  $('st-overlay-file').addEventListener('change', (e) => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { overlayImg = img; $('st-overlay-on').checked = true; }; img.src = URL.createObjectURL(f); });
+  $('st-cap').addEventListener('change', (e) => { if (e.target.checked) startCaptions(); else stopCaptions(); });
+  $('st-cap-lang').addEventListener('change', () => { if ($('st-cap').checked) { stopCaptions(); startCaptions(); } });
+  $('st-savescene').addEventListener('click', saveScene); renderSaved();
+  try { $('st-notes').value = localStorage.getItem('vs_notes') || ''; } catch { /* ignore */ }
+  $('st-notes').addEventListener('input', () => { try { localStorage.setItem('vs_notes', $('st-notes').value); } catch { /* ignore */ } });
+  $('st-tele').addEventListener('change', (e) => {
+    clearInterval(teleTimer); if (!e.target.checked) return;
+    teleTimer = setInterval(() => { const n = $('st-notes'); n.scrollTop += Number($('st-tele-speed').value) / 10; }, 50);
   });
   $('st-addcam').addEventListener('click', addCamera);
   $('st-addmic').addEventListener('click', addMic);

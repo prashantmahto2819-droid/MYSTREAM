@@ -9,6 +9,10 @@ export const PRESETS = [
   { id: 'instagram', label: 'Instagram Live (paste server URL)', url: '' },
   { id: 'x', label: 'X / Twitter Live (paste server URL)', url: '' },
   { id: 'linkedin', label: 'LinkedIn Live (paste server URL)', url: '' },
+  { id: 'tiktok', label: 'TikTok Live (paste server URL)', url: '' },
+  { id: 'rumble', label: 'Rumble (paste server URL)', url: '' },
+  { id: 'amazon', label: 'Amazon Live (paste server URL)', url: '' },
+  { id: 'telegram', label: 'Telegram (paste server URL)', url: '' },
   { id: 'custom', label: 'Custom RTMP', url: '' },
 ];
 

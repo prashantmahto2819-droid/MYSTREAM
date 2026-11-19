@@ -7,12 +7,12 @@ import { acceptKey, encodeText, encodeClose, encodeFrame, FrameParser } from './
  * The video is re-encoded (browser keyframes are unpredictable; YouTube wants <= 4s) but
  * at veryfast/720p30 that is roughly one CPU core.
  */
-export function buildStudioArgs({ output, hasAudio = true, height = 720, fps = 30, kbps = 3000 }) {
+export function buildStudioArgs({ output, hasAudio = true, height = 720, fps = 30, kbps = 3000, portrait = false }) {
   const args = ['-hide_banner', '-loglevel', 'warning', '-nostats', '-fflags', '+genpts', '-f', 'webm', '-i', 'pipe:0'];
   if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo');
   args.push(
     '-map', '0:v:0', '-map', hasAudio ? '0:a:0?' : '1:a:0',
-    '-vf', `scale=-2:${height}`, '-r', String(fps),
+    '-vf', portrait ? `scale=${height}:-2` : `scale=-2:${height}`, '-r', String(fps),
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
     '-profile:v', 'high', '-g', String(fps * 2), '-keyint_min', String(fps * 2), '-sc_threshold', '0',
     '-b:v', `${kbps}k`, '-maxrate', `${Math.round(kbps * 1.15)}k`, '-bufsize', `${kbps * 2}k`,
@@ -96,7 +96,7 @@ export function attachStudio(server, { store, relay, cfg, spawn = nodeSpawn, par
           relay.setFilter(user.ingest_key, ok); filtered = true;
         }
         const height = QUALITY[m.height] ? m.height : 720;
-        const args = buildStudioArgs({ output: `${cfg.mediamtxRtmp}/live/${user.ingest_key}`, hasAudio: m.audio !== false, height, kbps: QUALITY[height] });
+        const args = buildStudioArgs({ output: `${cfg.mediamtxRtmp}/live/${user.ingest_key}`, hasAudio: m.audio !== false, height, kbps: QUALITY[height], portrait: m.portrait === true });
         try { proc = spawn(cfg.ffmpegBin, args, { stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { send({ type: 'error', message: `Cannot start ffmpeg: ${e.message}` }); return finish('ffmpeg missing'); }
         started = true; active.set(user.id, session);
         proc.stderr?.on('data', (c) => { const l = String(c).split(/\r?\n/).filter(Boolean); if (l.length) lastLine = l[l.length - 1].slice(0, 300); });

@@ -44,6 +44,8 @@ test('studio args: reads webm from stdin, 2 s keyframes, silent track when no au
   assert.equal(a.at(-1), 'rtmp://x/live/k');
   assert.equal(a[a.indexOf('-g') + 1], '60');
   assert.ok(!a.includes('anullsrc=r=44100:cl=stereo'));
+  const pr = buildStudioArgs({ output: 'o', height: 720, portrait: true });
+  assert.equal(pr[pr.indexOf('-vf') + 1], 'scale=720:-2', 'portrait output scales by width');
   const n = buildStudioArgs({ output: 'o', hasAudio: false });
   assert.ok(n.includes('anullsrc=r=44100:cl=stereo') && n.includes('1:a:0'));
   assert.equal(n.at(-1), 'o');

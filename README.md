@@ -180,3 +180,10 @@ If the app restarts with "unable to open database file", the data folder belongs
 - Speaker scene: one person big, others in a side strip. Auto picks whoever is talking (with a green ring), or choose a person manually.
 - Clip list: play any clip on live, optionally with your camera small on top, loop or return to the previous scene when it ends.
 - Backgrounds: colour, image or gradients. To see the background behind you, turn on "Remove my room (AI)" or green screen.
+
+### Restream-style extras
+- Portrait (9:16) or Landscape output, Side-by-side layout, Countdown scene (auto-switches to camera at 00:00), saved scenes (stored in your browser).
+- Themes (Air, Base, News, Round) and fonts for lower-third, ticker, timer and chat messages; camera filters, touch-up, overlay frame PNG.
+- Background music with volume in the mixer, live captions (Hindi / English, Chrome or Edge), private notes with teleprompter scroll.
+- More destination presets: TikTok, Rumble, Amazon Live, Telegram (paste the server URL they give you).
+- Not built: QR codes, webinar pages, analytics, AI music.
