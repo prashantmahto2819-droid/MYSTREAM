@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vivid Stream</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main id="login" class="card narrow hidden">
+    <h1>Vivid Stream</h1>
+    <p class="muted">Sign in to manage your live destinations.</p>
+    <form id="login-form">
+      <label>Email <input name="email" type="email" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </main>
+
+  <div id="app" class="hidden">
+    <header>
+      <strong>Vivid Stream</strong>
+      <span id="who" class="muted"></span>
+      <button id="logout" class="ghost">Sign out</button>
+    </header>
+
+    <main class="grid">
+      <section class="card">
+        <h2>1. Send your stream here (OBS)</h2>
+        <p class="muted">In OBS: Settings &rarr; Stream &rarr; Service: Custom.</p>
+        <label>Server <div class="copy-row"><input id="ingest-url" readonly><button data-copy="ingest-url" class="ghost">Copy</button></div></label>
+        <label>Stream key <div class="copy-row"><input id="ingest-key" type="password" readonly><button id="toggle-key" class="ghost">Show</button><button data-copy="ingest-key" class="ghost">Copy</button></div></label>
+        <p><span id="ingest-badge" class="badge">Not receiving</span> <span id="mtx-badge" class="badge warn hidden">Relay engine offline</span></p>
+        <button id="rotate" class="ghost">Generate new stream key</button>
+        <form id="phone-form" class="stack">
+          <label>My WhatsApp number for alerts <input name="phone" id="phone" inputmode="tel" placeholder="919876543210"></label>
+          <button type="submit" class="ghost">Save number</button>
+          <p id="phone-note" class="sub"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>2. Destinations</h2>
+        <ul id="dest-list" class="list"></ul>
+        <p id="dest-empty" class="muted hidden">No destinations yet. Add one below.</p>
+        <form id="dest-form" class="stack">
+          <h3>Add destination</h3>
+          <label>Platform <select name="platform" id="platform"></select></label>
+          <label>Name <input name="name" placeholder="e.g. News channel (YouTube)" required maxlength="80"></label>
+          <label>Server URL <input name="rtmp_url" id="rtmp-url" placeholder="rtmp://..." required></label>
+          <label>Stream key <input name="stream_key" type="password" autocomplete="off" required></label>
+          <button type="submit">Add destination</button>
+          <p id="dest-error" class="error"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>3. Videos</h2>
+        <p class="muted">Upload a recorded video, then schedule it to go live.</p>
+        <p id="storage" class="sub"></p>
+        <ul id="video-list" class="list"></ul>
+        <p id="video-empty" class="muted hidden">No videos yet.</p>
+        <form id="upload-form" class="stack">
+          <label>Video file <input type="file" name="file" accept="video/*,.mkv,.ts,.flv" required></label>
+          <button type="submit" id="upload-btn">Upload</button>
+          <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
+          <p id="upload-status" class="sub"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>4. Schedule a live</h2>
+        <ul id="schedule-list" class="list"></ul>
+        <p id="schedule-empty" class="muted hidden">Nothing scheduled.</p>
+        <form id="schedule-form" class="stack">
+          <h3>New schedule</h3>
+          <label>Title <input name="title" maxlength="80" placeholder="optional"></label>
+          <fieldset><legend>Videos (played in the order you tick them)</legend><div id="sched-videos" class="checks"></div></fieldset>
+          <label>Start time (your local time) <input name="start" id="sched-start" type="datetime-local" required></label>
+          <label>Repeat <input name="loops" type="number" min="0" max="50" value="1"></label>
+          <p class="sub">0 = keep repeating until you stop it (24x7 channel).</p>
+          <fieldset><legend>Send to</legend><div id="sched-dests" class="checks"></div></fieldset>
+          <p class="sub">If none is ticked, all enabled destinations are used.</p>
+          <label class="switch"><input type="checkbox" name="delete_after" checked> Delete the video after the live ends</label>
+          <button type="submit">Schedule</button>
+          <p id="sched-error" class="error"></p>
+        </form>
+      </section>
+
+      <section class="card" id="team-card">
+        <h2>Team</h2>
+        <ul id="user-list" class="list"></ul>
+        <form id="user-form" class="stack">
+          <h3>Add team member</h3>
+          <label>Name <input name="name" required maxlength="80"></label>
+          <label>Email <input name="email" type="email" required></label>
+          <label>Password <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+          <label>Role <select name="role"><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
+          <button type="submit">Add member</button>
+          <p id="user-error" class="error"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Activity</h2>
+        <ul id="activity" class="list small"></ul>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

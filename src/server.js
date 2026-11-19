@@ -1,0 +1,544 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadConfig } from './config.js';
+import { openDb } from './db.js';
+import { makeVault, hashPassword, verifyPassword, randomToken, safeEqual } from './crypto.js';
+import { RelayManager } from './relay.js';
+import { VideoProcessor, VIDEO_EXTS } from './media.js';
+import { SchedulePlayer } from './player.js';
+import { Notifier } from './notify.js';
+import { relayEventHandler, playerEventHandler } from './alerts.js';
+import {
+  PRESETS, cleanPlatform, validateRtmpUrl, validateStreamKey,
+  validateName, validateEmail, validatePassword,
+} from './validate.js';
+
+const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+};
+
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+const MAX_CHUNK = 32 * 1024 * 1024;
+const CHUNK_SIZE = 8 * 1024 * 1024;
+
+export function createApp({ cfg, store, relay, internalToken, processor, player, log = console }) {
+  const vault = relay.vault;
+  const loginFails = new Map(); // "ip|email" -> { n, until }
+
+  const routes = [];
+  const route = (method, pattern, handler, opts = {}) => {
+    const keys = [];
+    const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
+    routes.push({ method, re, keys, handler, ...opts });
+  };
+
+  // ---------- helpers ----------
+  const send = (res, status, body, headers = {}) => {
+    const isStr = typeof body === 'string';
+    res.writeHead(status, {
+      'content-type': isStr ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      ...headers,
+    });
+    res.end(isStr ? body : JSON.stringify(body));
+  };
+
+  const readJson = (req) => new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 100_000) { reject(new HttpError(413, 'Request too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (!chunks.length) return resolve({});
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      catch { reject(new HttpError(400, 'Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+
+  const parseCookies = (req) => Object.fromEntries(
+    String(req.headers.cookie || '').split(';').map((p) => p.trim().split(/=(.*)/s).slice(0, 2)).filter(([k]) => k)
+  );
+
+  const cookieHeader = (req, value, maxAgeSec) => {
+    const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+    return `sid=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAgeSec}${secure}`;
+  };
+
+  const clientIp = (req) => String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+
+  const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role });
+
+  const needAdmin = (user) => { if (user.role !== 'admin') throw new HttpError(403, 'Admin only'); };
+
+  const destView = (d) => ({
+    id: d.id, name: d.name, platform: d.platform, rtmp_url: d.rtmp_url,
+    enabled: !!d.enabled, user_id: d.user_id, ...relay.statusFor(d.id),
+  });
+
+  const ownedDestination = (user, id) => {
+    const d = store.getDestination(Number(id));
+    if (!d || (d.user_id !== user.id && user.role !== 'admin')) throw new HttpError(404, 'Not found');
+    return d;
+  };
+
+  // ---------- public / internal routes ----------
+  route('GET', '/healthz', async (_req, res) => send(res, 200, { ok: true, mediamtx: relay.apiOk }), { auth: false });
+
+  // MediaMTX asks us whether a connection is allowed.
+  route('POST', '/internal/mediamtx-auth', async (req, res) => {
+    const b = await readJson(req);
+    const action = b.action;
+    if (action === 'publish') {
+      const m = /^live\/([0-9a-f]{24})$/.exec(String(b.path || ''));
+      const user = m && store.getUserByIngestKey(m[1]);
+      return user && user.active ? send(res, 200, {}) : send(res, 401, {});
+    }
+    if (action === 'read') {
+      // Only our own ffmpeg relays may read, using the per-process token.
+      const token = new URLSearchParams(String(b.query || '')).get('token');
+      return token && safeEqual(token, internalToken) ? send(res, 200, {}) : send(res, 401, {});
+    }
+    // api/metrics/pprof are excluded from auth in mediamtx.yml; deny anything else.
+    return send(res, 401, {});
+  }, { auth: false, csrf: false });
+
+  route('POST', '/api/login', async (req, res) => {
+    const b = await readJson(req);
+    const email = String(b.email || '').trim().toLowerCase();
+    const id = `${clientIp(req)}|${email}`;
+    const f = loginFails.get(id);
+    if (f && f.n >= 5 && f.until > Date.now()) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
+    const user = store.getUserByEmail(email);
+    const ok = user && user.active && verifyPassword(String(b.password || ''), user.password_hash);
+    if (!ok) {
+      const n = (f && f.until > Date.now() ? f.n : 0) + 1;
+      loginFails.set(id, { n, until: Date.now() + 10 * 60 * 1000 });
+      throw new HttpError(401, 'Wrong email or password');
+    }
+    loginFails.delete(id);
+    const token = store.createSession(user.id, SESSION_TTL_MS);
+    store.addActivity(user.id, 'login');
+    send(res, 200, { user: publicUser(user) }, { 'set-cookie': cookieHeader(req, token, SESSION_TTL_MS / 1000) });
+  }, { auth: false });
+
+  route('POST', '/api/logout', async (req, res) => {
+    const token = parseCookies(req).sid;
+    if (token) store.deleteSession(token);
+    send(res, 200, { ok: true }, { 'set-cookie': cookieHeader(req, '', 0) });
+  }, { auth: false });
+
+  // ---------- authenticated routes ----------
+  route('GET', '/api/me', async (_req, res, { user }) => send(res, 200, { user: publicUser(user) }));
+
+  route('GET', '/api/presets', async (_req, res) => send(res, 200, { presets: PRESETS }));
+
+  route('GET', '/api/status', async (_req, res, { user }) => {
+    const dests = (user.role === 'admin' ? store.listAllDestinations() : store.listDestinations(user.id)).map(destView);
+    send(res, 200, {
+      ingest: { url: cfg.publicRtmpUrl, key: user.ingest_key, live: relay.isIngestLive(user.ingest_key) },
+      mediamtxOk: relay.apiOk,
+      destinations: dests,
+    });
+  });
+
+  route('POST', '/api/me/rotate-ingest-key', async (_req, res, { user }) => {
+    const key = store.rotateIngestKey(user.id);
+    store.addActivity(user.id, 'ingest_key_rotated');
+    send(res, 200, { key });
+  });
+
+  route('POST', '/api/destinations', async (req, res, { user }) => {
+    const b = await readJson(req);
+    const name = validateName(b.name);
+    const url = validateRtmpUrl(b.rtmp_url);
+    const key = validateStreamKey(b.stream_key);
+    for (const v of [name, url, key]) if (!v.ok) throw new HttpError(400, v.error);
+    if (store.countDestinations(user.id) >= cfg.maxDestinationsPerUser) {
+      throw new HttpError(400, `Limit reached (${cfg.maxDestinationsPerUser} destinations)`);
+    }
+    const id = store.createDestination({
+      userId: user.id, name: name.value, platform: cleanPlatform(b.platform),
+      rtmpUrl: url.url, keyEnc: vault.encrypt(key.key),
+    });
+    store.addActivity(user.id, 'destination_added', name.value);
+    send(res, 201, { destination: destView(store.getDestination(id)) });
+  });
+
+  route('PATCH', '/api/destinations/:id', async (req, res, { user, params }) => {
+    const d = ownedDestination(user, params.id);
+    const b = await readJson(req);
+    const patch = {};
+    if (b.name !== undefined) { const v = validateName(b.name); if (!v.ok) throw new HttpError(400, v.error); patch.name = v.value; }
+    if (b.rtmp_url !== undefined) { const v = validateRtmpUrl(b.rtmp_url); if (!v.ok) throw new HttpError(400, v.error); patch.rtmpUrl = v.url; }
+    if (b.stream_key !== undefined && b.stream_key !== '') {
+      const v = validateStreamKey(b.stream_key); if (!v.ok) throw new HttpError(400, v.error);
+      patch.keyEnc = vault.encrypt(v.key);
+    }
+    if (b.platform !== undefined) patch.platform = cleanPlatform(b.platform);
+    if (b.enabled !== undefined) patch.enabled = !!b.enabled;
+    store.updateDestination(d.id, patch);
+    if (patch.enabled !== undefined) {
+      store.addActivity(user.id, patch.enabled ? 'destination_enabled' : 'destination_disabled', d.name);
+    }
+    send(res, 200, { destination: destView(store.getDestination(d.id)) });
+    relay.tick().catch(() => {}); // apply immediately instead of waiting for the next poll
+  });
+
+  route('DELETE', '/api/destinations/:id', async (_req, res, { user, params }) => {
+    const d = ownedDestination(user, params.id);
+    relay.stop(d.id, 'deleted');
+    store.deleteDestination(d.id);
+    store.addActivity(user.id, 'destination_deleted', d.name);
+    send(res, 200, { ok: true });
+  });
+
+  route('GET', '/api/activity', async (_req, res, { user }) => {
+    send(res, 200, { activity: store.listActivity(user.role === 'admin' ? null : user.id) });
+  });
+
+  route('PATCH', '/api/me', async (req, res, { user }) => {
+    const b = await readJson(req);
+    if (b.phone !== undefined) {
+      const p = String(b.phone).replace(/[\s-]/g, '');
+      if (p !== '' && !/^\+?\d{8,15}$/.test(p)) throw new HttpError(400, 'Enter the number with country code, e.g. 919876543210');
+      store.updateUser(user.id, { phone: p });
+    }
+    send(res, 200, { ok: true });
+  });
+
+  route('GET', '/api/me/settings', async (_req, res, { user }) => {
+    send(res, 200, { phone: store.getUser(user.id).phone, alertsConfigured: !!cfg.alertUrl });
+  });
+
+  // ---------- videos: resumable upload ----------
+  const ownedVideo = (user, id) => {
+    const v = store.getVideo(Number(id));
+    if (!v || (v.user_id !== user.id && user.role !== 'admin')) throw new HttpError(404, 'Not found');
+    return v;
+  };
+  const videoView = (v) => ({
+    id: v.id, user_id: v.user_id, title: v.title, status: v.status, error: v.error, size: v.size,
+    expected_size: v.expected_size, duration: v.duration, width: v.width, height: v.height, fps: v.fps,
+    created_at: v.created_at, in_use: store.videoInUse(v.id),
+  });
+  const freeBytes = () => { const s = fs.statfsSync(cfg.dataDir); return Number(s.bavail) * Number(s.bsize); };
+
+  route('GET', '/api/storage', async (_req, res, { user }) => {
+    send(res, 200, {
+      freeBytes: freeBytes(), usedBytes: store.storageUsed(user.id),
+      quotaBytes: cfg.userQuotaBytes, maxUploadBytes: cfg.maxUploadBytes,
+    });
+  });
+
+  route('GET', '/api/videos', async (_req, res, { user }) => {
+    const list = store.listVideos(user.role === 'admin' ? null : user.id);
+    send(res, 200, { videos: list.map(videoView) });
+  });
+
+  route('POST', '/api/uploads', async (req, res, { user }) => {
+    const b = await readJson(req);
+    const filename = String(b.filename || '');
+    const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+    if (!VIDEO_EXTS.has(ext)) throw new HttpError(400, `Unsupported file type. Use: ${[...VIDEO_EXTS].join(', ')}`);
+    const baseName = filename.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+    const title = validateName(b.title || baseName, 'Title');
+    if (!title.ok) throw new HttpError(400, title.error);
+    const size = Number(b.size);
+    if (!Number.isInteger(size) || size <= 0) throw new HttpError(400, 'Invalid file size');
+    if (size > cfg.maxUploadBytes) throw new HttpError(400, `File is larger than the ${(cfg.maxUploadBytes / 1024 ** 3).toFixed(0)} GB limit`);
+    if (store.storageUsed(user.id) + size > cfg.userQuotaBytes) throw new HttpError(400, 'Your storage quota is full. Delete old videos first.');
+    if (freeBytes() - cfg.diskReserveBytes < size) throw new HttpError(507, 'Not enough free disk space on the server');
+
+    const dir = path.join(cfg.dataDir, 'videos', String(user.id));
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${crypto.randomUUID()}.${ext}`);
+    fs.writeFileSync(file, '');
+    const id = store.createVideo({ userId: user.id, title: title.value, filePath: file, ext, expectedSize: size });
+    send(res, 201, { id, chunkSize: CHUNK_SIZE });
+  });
+
+  route('GET', '/api/uploads/:id', async (_req, res, { user, params }) => {
+    const v = ownedVideo(user, params.id);
+    const received = fs.existsSync(v.file_path) ? fs.statSync(v.file_path).size : 0;
+    send(res, 200, { received, size: v.expected_size, status: v.status });
+  });
+
+  route('PUT', '/api/uploads/:id', async (req, res, { user, params }) => {
+    const v = ownedVideo(user, params.id);
+    if (v.status !== 'uploading') { req.resume(); throw new HttpError(409, 'Upload already finished'); }
+    const offset = Number(new URL(req.url, 'http://x').searchParams.get('offset'));
+    const len = Number(req.headers['content-length']);
+    if (!Number.isInteger(offset) || offset < 0) { req.resume(); throw new HttpError(400, 'Invalid offset'); }
+    if (!Number.isInteger(len) || len <= 0 || len > MAX_CHUNK) { req.resume(); throw new HttpError(400, 'Chunk must be 1 byte to 32 MB'); }
+    const current = fs.existsSync(v.file_path) ? fs.statSync(v.file_path).size : 0;
+    if (offset !== current) { req.resume(); return send(res, 409, { error: 'Offset mismatch', received: current }); }
+    if (current + len > v.expected_size) { req.resume(); throw new HttpError(400, 'Chunk goes past the end of the file'); }
+    try {
+      await pipeline(req, fs.createWriteStream(v.file_path, { flags: 'a' }));
+    } finally {
+      store.updateVideo(v.id, { size: fs.statSync(v.file_path).size });
+    }
+    send(res, 200, { received: fs.statSync(v.file_path).size });
+  });
+
+  route('POST', '/api/uploads/:id/complete', async (_req, res, { user, params }) => {
+    const v = ownedVideo(user, params.id);
+    if (v.status !== 'uploading') throw new HttpError(409, 'Upload already finished');
+    const size = fs.statSync(v.file_path).size;
+    if (size !== v.expected_size) throw new HttpError(400, `Upload incomplete (${size} of ${v.expected_size} bytes)`);
+    store.updateVideo(v.id, { status: 'processing', size });
+    store.addActivity(user.id, 'video_uploaded', v.title);
+    processor?.enqueue(v.id);
+    send(res, 200, { ok: true });
+  });
+
+  route('DELETE', '/api/videos/:id', async (_req, res, { user, params }) => {
+    const v = ownedVideo(user, params.id);
+    if (v.status === 'processing') throw new HttpError(409, 'This video is being prepared. Try again in a few minutes.');
+    if (store.videoInUse(v.id)) throw new HttpError(409, 'This video is part of a scheduled live. Cancel that schedule first.');
+    fs.rmSync(v.file_path, { force: true });
+    fs.rmSync(`${v.file_path}.conv.mp4`, { force: true });
+    store.deleteVideo(v.id);
+    store.addActivity(user.id, 'video_deleted', v.title);
+    send(res, 200, { ok: true });
+  });
+
+  // ---------- schedules ----------
+  const scheduleWindow = (s, startAt, loops, videoIds) => {
+    const dur = videoIds.reduce((t, id) => t + (store.getVideo(id)?.duration || 0), 0);
+    return { start: startAt, end: loops === 0 ? Infinity : startAt + dur * 1000 * loops + 60000 };
+  };
+  const scheduleView = (s) => ({
+    id: s.id, user_id: s.user_id, title: s.title, status: s.status, error: s.error, start_at: s.start_at,
+    loop_count: s.loop_count, delete_after: !!s.delete_after, dest_ids: s.dest_ids, started_at: s.started_at,
+    ended_at: s.ended_at, videos: s.video_ids.map((id) => store.getVideo(id)?.title || '(deleted)'),
+  });
+
+  route('GET', '/api/schedules', async (_req, res, { user }) => {
+    send(res, 200, { schedules: store.listSchedules(user.role === 'admin' ? null : user.id).map(scheduleView) });
+  });
+
+  route('POST', '/api/schedules', async (req, res, { user }) => {
+    const b = await readJson(req);
+    const ids = [...new Set((Array.isArray(b.video_ids) ? b.video_ids : []).map(Number))];
+    if (!ids.length || ids.length > 20 || ids.some((n) => !Number.isInteger(n))) throw new HttpError(400, 'Choose 1 to 20 videos');
+    const videos = ids.map((id) => store.getVideo(id));
+    if (videos.some((v) => !v || v.user_id !== user.id)) throw new HttpError(400, 'Unknown video');
+    if (videos.some((v) => v.status !== 'ready')) throw new HttpError(400, 'All videos must be ready (finished uploading and preparing)');
+
+    const startAt = Number(b.start_at);
+    const now = Date.now();
+    if (!Number.isInteger(startAt) || startAt < now - 30000) throw new HttpError(400, 'Start time must be in the future');
+    if (startAt > now + 366 * 24 * 3600 * 1000) throw new HttpError(400, 'Start time is too far away');
+    const loops = b.loop_count === undefined ? 1 : Number(b.loop_count);
+    if (!Number.isInteger(loops) || loops < 0 || loops > 50) throw new HttpError(400, 'Repeat must be 0 (until stopped) to 50');
+
+    let destIds = null;
+    if (Array.isArray(b.dest_ids) && b.dest_ids.length) {
+      destIds = b.dest_ids.map(Number);
+      const own = new Set(store.listDestinations(user.id).map((d) => d.id));
+      if (destIds.some((n) => !own.has(n))) throw new HttpError(400, 'Unknown destination');
+    }
+    const usable = store.listEnabledDestinations(user.id).filter((d) => !destIds || destIds.includes(d.id));
+    if (!usable.length) throw new HttpError(400, 'Add and enable at least one destination first');
+
+    // Copy-mode playlists need matching video parameters, or players may glitch at the join.
+    const [first] = videos;
+    for (const v of videos) {
+      if (v.width !== first.width || v.height !== first.height || Math.abs((v.fps || 0) - (first.fps || 0)) > 0.5) {
+        throw new HttpError(400, `Videos in one playlist must have the same size and frame rate ("${first.title}" is ${first.width}x${first.height} @${first.fps}fps, "${v.title}" is ${v.width}x${v.height} @${v.fps}fps). Schedule them separately.`);
+      }
+    }
+
+    const mine = scheduleWindow(null, startAt, loops, ids);
+    for (const o of store.listActiveSchedules(user.id)) {
+      const w = scheduleWindow(o, o.start_at, o.loop_count, o.video_ids);
+      if (mine.start < w.end && w.start < mine.end) {
+        throw new HttpError(409, `This overlaps with your other live "${o.title}". One stream key can only carry one live at a time.`);
+      }
+    }
+
+    const title = validateName(b.title || videos[0].title, 'Title');
+    if (!title.ok) throw new HttpError(400, title.error);
+    const id = store.createSchedule({
+      userId: user.id, title: title.value, videoIds: ids, startAt, loopCount: loops,
+      destIds, deleteAfter: b.delete_after === undefined ? true : !!b.delete_after,
+    });
+    store.addActivity(user.id, 'schedule_created', `${title.value} @ ${new Date(startAt).toISOString()}`);
+    send(res, 201, { schedule: scheduleView(store.getSchedule(id)) });
+  });
+
+  route('POST', '/api/schedules/:id/cancel', async (_req, res, { user, params }) => {
+    const s = store.getSchedule(Number(params.id));
+    if (!s || (s.user_id !== user.id && user.role !== 'admin')) throw new HttpError(404, 'Not found');
+    if (!player?.cancel(s.id)) throw new HttpError(409, 'This live is not running or scheduled any more');
+    store.addActivity(user.id, 'schedule_cancelled', s.title);
+    send(res, 200, { ok: true });
+  });
+
+  // ---------- admin: team ----------
+  route('GET', '/api/users', async (_req, res, { user }) => {
+    needAdmin(user);
+    send(res, 200, { users: store.listUsers() });
+  });
+
+  route('POST', '/api/users', async (req, res, { user }) => {
+    needAdmin(user);
+    const b = await readJson(req);
+    const email = validateEmail(b.email);
+    const name = validateName(b.name);
+    const pw = validatePassword(b.password);
+    for (const v of [email, name, pw]) if (!v.ok) throw new HttpError(400, v.error);
+    if (store.getUserByEmail(email.value)) throw new HttpError(409, 'Email already exists');
+    const role = b.role === 'admin' ? 'admin' : 'operator';
+    const id = store.createUser({ email: email.value, name: name.value, passwordHash: hashPassword(pw.value), role });
+    store.addActivity(user.id, 'user_created', email.value);
+    send(res, 201, { id });
+  });
+
+  route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
+    needAdmin(user);
+    const target = store.getUser(Number(params.id));
+    if (!target) throw new HttpError(404, 'Not found');
+    const b = await readJson(req);
+    const patch = {};
+    if (b.active !== undefined) {
+      if (target.id === user.id && !b.active) throw new HttpError(400, 'You cannot deactivate yourself');
+      patch.active = !!b.active;
+    }
+    if (b.role !== undefined) {
+      if (target.id === user.id && b.role !== 'admin') throw new HttpError(400, 'You cannot remove your own admin role');
+      patch.role = b.role === 'admin' ? 'admin' : 'operator';
+    }
+    if (b.password !== undefined) { const v = validatePassword(b.password); if (!v.ok) throw new HttpError(400, v.error); patch.passwordHash = hashPassword(v.value); }
+    store.updateUser(target.id, patch);
+    if (patch.active === false || patch.passwordHash) store.deleteUserSessions(target.id);
+    store.addActivity(user.id, 'user_updated', target.email);
+    send(res, 200, { ok: true });
+  });
+
+  // ---------- static files ----------
+  const serveStatic = (req, res) => {
+    const urlPath = new URL(req.url, 'http://x').pathname;
+    const rel = urlPath === '/' ? 'index.html' : decodeURIComponent(urlPath).replace(/^\/+/, '');
+    const file = path.resolve(PUBLIC_DIR, rel);
+    if (!file.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      return send(res, 404, { error: 'Not found' });
+    }
+    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
+    fs.createReadStream(file).pipe(res);
+  };
+
+  // ---------- dispatcher ----------
+  const server = http.createServer(async (req, res) => {
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('x-frame-options', 'DENY');
+    res.setHeader('referrer-policy', 'no-referrer');
+    res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'");
+    try {
+      const pathname = new URL(req.url, 'http://x').pathname;
+      if ((req.method === 'GET' || req.method === 'HEAD') && !pathname.startsWith('/api/') && !pathname.startsWith('/internal/') && pathname !== '/healthz') {
+        return serveStatic(req, res);
+      }
+      const r = routes.find((x) => x.method === req.method && x.re.test(pathname));
+      if (!r) return send(res, 404, { error: 'Not found' });
+      const params = {};
+      const m = r.re.exec(pathname);
+      r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
+
+      // Custom header requirement blocks cross-site form posts (CSRF).
+      if (r.csrf !== false && req.method !== 'GET' && req.headers['x-requested-with'] !== 'vivid') {
+        throw new HttpError(403, 'Missing X-Requested-With header');
+      }
+      let user = null;
+      if (r.auth !== false) {
+        user = store.getSessionUser(parseCookies(req).sid);
+        if (!user) throw new HttpError(401, 'Please log in');
+      }
+      await r.handler(req, res, { user, params });
+    } catch (e) {
+      if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+      log.error('request failed', e);
+      if (!res.headersSent) send(res, 500, { error: 'Server error' });
+    }
+  });
+
+  return server;
+}
+
+// ---------- bootstrap ----------
+export function seedAdmin(store, cfg, log = console) {
+  if (store.countUsers() > 0) return;
+  if (cfg.adminEmail && cfg.adminPassword) {
+    store.createUser({
+      email: cfg.adminEmail, name: 'Admin',
+      passwordHash: hashPassword(cfg.adminPassword), role: 'admin',
+    });
+    log.info(`Created first admin: ${cfg.adminEmail}`);
+  } else {
+    log.warn('No users yet. Set ADMIN_EMAIL and ADMIN_PASSWORD in .env, or run: npm run create-user -- you@example.com "Your Name" "password" admin');
+  }
+}
+
+async function main() {
+  const cfg = loadConfig();
+  const store = openDb(cfg.dataDir);
+  const vault = makeVault(cfg.secret);
+  const internalToken = randomToken(16);
+  seedAdmin(store, cfg);
+
+  const notifier = new Notifier({ cfg, store });
+  const relay = new RelayManager({
+    store, vault, cfg, internalToken, onEvent: relayEventHandler({ store, notifier }),
+  });
+  const processor = new VideoProcessor({ store, cfg });
+  const player = new SchedulePlayer({
+    store, cfg, relay, notifier, dataDir: cfg.dataDir, onEvent: playerEventHandler({ store, notifier }),
+  });
+  const server = createApp({ cfg, store, relay, internalToken, processor, player });
+  server.listen(cfg.port, cfg.host, () => console.log(`vivid-stream listening on ${cfg.host}:${cfg.port}`));
+  relay.start();
+  player.start();
+  processor.resume();
+
+  const housekeeping = () => {
+    store.purgeSessions();
+    store.trimActivity();
+    // Unfinished uploads and failed files older than a day are removed to free disk space.
+    for (const v of store.listStaleUploads('-1 day')) {
+      fs.rmSync(v.file_path, { force: true });
+      fs.rmSync(`${v.file_path}.conv.mp4`, { force: true });
+      store.deleteVideo(v.id);
+    }
+  };
+  housekeeping();
+  const housekeepingTimer = setInterval(housekeeping, 3600 * 1000);
+  const shutdown = async () => {
+    clearInterval(housekeepingTimer);
+    player.shutdown();
+    processor.shutdown();
+    await relay.shutdown();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { console.error(e.message); process.exit(1); });
+}

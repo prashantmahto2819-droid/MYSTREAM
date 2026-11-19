@@ -1,0 +1,24 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MEDIAMTX_API: http://mediamtx:9997
+      MEDIAMTX_RTMP: rtmp://mediamtx:1935
+    volumes:
+      - ./data:/data
+    # Dashboard on localhost only; put Caddy / Cloudflare Tunnel in front for HTTPS.
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - mediamtx
+
+  mediamtx:
+    image: bluenviron/mediamtx:1
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    # Only the RTMP ingest port is public. The API (9997) stays internal.
+    ports:
+      - "1935:1935"

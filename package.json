@@ -1,0 +1,13 @@
+{
+  "name": "vivid-stream",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted multistream relay: one OBS stream in, many YouTube/Facebook/RTMP destinations out.",
+  "type": "module",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\"",
+    "create-user": "node --disable-warning=ExperimentalWarning src/cli.js create-user"
+  }
+}

@@ -1,0 +1,112 @@
+# Vivid Stream
+
+Self-hosted multistream relay (Restream-style) for a small office team.
+
+- **Live:** OBS sends one stream in; the server forwards it to many YouTube / Facebook / Twitch / custom RTMP destinations.
+- **Recorded:** upload a video (2-5 GB is fine), schedule it for a time (IST), and it goes live on the chosen destinations by itself. Playlist, repeat, 24x7 loop. The file is deleted after the live.
+- **Alerts:** WhatsApp message when a live starts, ends, fails or is missed, and when a destination drops.
+
+Stack: [MediaMTX](https://github.com/bluenviron/mediamtx) (RTMP ingest), `ffmpeg -c copy` relays (no re-encoding, so 1080p/4K pass through and CPU stays low), zero-dependency Node.js 22 app (built-in `node:sqlite`), vanilla-JS dashboard.
+
+## What is included
+
+| Area | Features |
+|---|---|
+| Team | Login, admin/operator roles, each user has their own OBS stream key and destinations, activity log |
+| Destinations | Presets for YouTube, Facebook, Twitch, custom RTMP(S); stream keys stored AES-256-GCM encrypted and never sent back to the browser; On/Off while live |
+| Live relay | One ffmpeg per destination, auto-restart with backoff, one failing destination never affects the others, errors shown in the dashboard |
+| Videos | Resumable chunked upload (survives network drops, works through Cloudflare), storage quota and free-space checks, automatic check of every upload |
+| Preparation | Video is re-encoded **only if needed** (not H.264/AAC, keyframes too far apart, no audio track), one at a time |
+| Schedule | Date/time in your local time, playlist (same resolution/fps), repeat 1-50 or until stopped, pick destinations, auto-delete, cancel/stop, overlap protection, late-start protection |
+| Alerts | Generic webhook (works with Vivid Relay), per-user number + office numbers, cooldown so a flapping stream does not spam |
+| Safety | CSRF header, login rate limit, strict CSP, private/internal destination URLs rejected, MediaMTX connections authorised by the app |
+
+## How it works
+
+```
+OBS ──rtmp──▶ MediaMTX ◀── ffmpeg (copy) ──▶ YouTube channel 1
+(live/<key>)      ▲  ▲     ffmpeg (copy) ──▶ YouTube channel 2
+                  │  │     ffmpeg (copy) ──▶ Facebook page
+                  │  └── ffmpeg (copy, concat playlist) ◀── uploaded videos  (scheduled live)
+        app polls the MediaMTX API every 2s: stream appears → start relays, stream drops → stop relays
+```
+
+A scheduled live publishes into MediaMTX exactly like OBS would, so the same relay code sends it everywhere, and the connection to YouTube/Facebook is not interrupted between playlist items.
+
+---
+
+## Setup, step by step (about 30 minutes)
+
+You need: the Hetzner server with Docker, your domain on Cloudflare, this code in your GitHub repo.
+
+### 1. Put the code on the server
+1. Push this folder to your repo.
+2. SSH into the Hetzner server and check Docker: `docker --version && docker compose version` (install guide if missing: https://docs.docker.com/engine/install/ubuntu/).
+3. Clone: `git clone https://github.com/<you>/<repo>.git /srv/vivid-stream && cd /srv/vivid-stream`
+
+### 2. Configure
+1. `cp .env.example .env && nano .env`
+2. `APP_SECRET`: paste the output of `openssl rand -hex 32`. **Keep a copy somewhere safe**, because if it is lost the saved stream keys cannot be read.
+3. `PUBLIC_RTMP_URL=rtmp://rtmp.vividbrandify.com/live`
+4. `ADMIN_EMAIL` and `ADMIN_PASSWORD`: your first login.
+
+### 3. DNS (Cloudflare)
+1. Open https://dash.cloudflare.com/ → your domain → DNS → Records.
+2. Add an **A** record: name `rtmp`, value = the server IP, **Proxy status: DNS only (grey cloud)**. Cloudflare's proxy does not carry RTMP.
+
+### 4. Open the RTMP port (Hetzner)
+1. Open https://console.hetzner.cloud/ → your project → Firewalls (or the server's Firewall tab).
+2. Allow inbound **TCP 1935**. Do not open 3000 or 9997.
+3. If the server uses `ufw`: `sudo ufw allow 1935/tcp`
+
+### 5. Start it
+```bash
+docker compose up -d --build
+docker compose logs -f        # Ctrl+C to leave; expect "Created first admin" and "vivid-stream listening"
+```
+If `mediamtx` shows an `authHTTPExclude` warning, send me the log line.
+
+### 6. Dashboard with HTTPS (Cloudflare Tunnel)
+The dashboard listens on `127.0.0.1:3000` only. Publish it through a tunnel:
+1. https://one.dash.cloudflare.com/ → Networks → Tunnels → create (or reuse) a tunnel and install `cloudflared` on the server as shown on that page. Guide: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/
+2. Add a **Public hostname**: `live.vividbrandify.com` → Service `HTTP` → `localhost:3000`.
+3. Open `https://live.vividbrandify.com` and sign in.
+
+Uploads work through Cloudflare even on the free plan, because the browser sends the video in 8 MB pieces (the 100 MB request limit does not matter).
+
+### 7. Team and alerts
+1. Dashboard → Team → add your 5-6 colleagues (they set their own WhatsApp number on their dashboard).
+2. WhatsApp alerts: in `.env` set `ALERT_WEBHOOK_URL` to the "send message" URL of Vivid Relay, `ALERT_WEBHOOK_AUTH` if it needs a token, and adjust `ALERT_BODY_TEMPLATE` so the JSON field names match what that endpoint expects. Add `ALERT_TO` for the office numbers that should get every alert. Then `docker compose up -d` again.
+
+### 8. Test before the real event
+1. YouTube Studio → Create → Go live → **Stream** → copy Stream URL + key, set visibility **Unlisted** (https://studio.youtube.com/). Live must be enabled on the channel (up to 24 hours the first time).
+2. Dashboard → Add destination (YouTube preset) → paste the key.
+3. OBS → Settings → Stream → Service **Custom**: Server = `rtmp://rtmp.vividbrandify.com/live`, Stream key = the one shown in the dashboard. Start Streaming. Within ~3 seconds the destination turns **Live**.
+4. Facebook: Live Producer → "Use a persistent stream key" → use the Facebook preset and paste the key.
+5. Scheduled video: upload a 1-2 minute clip, schedule it 5 minutes ahead, watch it go live, confirm the file disappears afterwards.
+6. Pull the network cable on OBS or stop streaming and check the alert arrives.
+
+### Updating later
+```bash
+cd /srv/vivid-stream && git pull && docker compose up -d --build
+```
+Back up `./data` regularly (database + stored videos): `tar czf backup-$(date +%F).tgz data/`.
+
+---
+
+## Good to know
+
+- **Bandwidth:** every destination re-sends the incoming bitrate. 6 Mbps video × 5 destinations = 30 Mbps upload.
+- **4K:** works in copy mode if the destination accepts it (YouTube does; Facebook and Twitch generally do not and would need transcoding, which this version does not do).
+- **Playlist rule:** videos in one schedule must have the same size and frame rate, otherwise schedule them separately.
+- **Facebook:** use a *persistent* stream key. **YouTube:** one stream key allows a limited number of simultaneous streams.
+- **One stream key = one live at a time.** If OBS is live, a scheduled video on the same key will not start (you get an alert).
+- **Server restart during a live** cuts it; the schedule is marked failed and you are alerted.
+- Changing `APP_SECRET` makes saved stream keys unreadable.
+- Run the tests: `npm test` (Node 22.5+, needs ffmpeg for the media tests).
+
+## Roadmap
+
+1. Connect with Vividora: "Schedule live" button on a finished render, recording back into Vividora
+2. Recording of lives, bitrate/dropped-frame stats, standby slate, destination groups
+3. Browser studio (scenes, overlays, guests) and OAuth "Connect YouTube/Facebook" buttons

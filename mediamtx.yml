@@ -1,0 +1,24 @@
+# MediaMTX: receives the OBS stream (RTMP) and lets the app's ffmpeg relays read it.
+logLevel: info
+
+rtmp: yes
+rtmpAddress: :1935
+rtsp: no
+hls: no
+webrtc: no
+srt: no
+
+# Control API is only reachable inside the docker network (port 9997 is NOT published).
+api: yes
+apiAddress: :9997
+
+# Every publish/read is checked by the app (see /internal/mediamtx-auth in src/server.js).
+authMethod: http
+authHTTPAddress: http://app:3000/internal/mediamtx-auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+paths:
+  all_others:
