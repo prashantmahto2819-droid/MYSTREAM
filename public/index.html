@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vivid Stream</title>
-  <link rel="stylesheet" href="/style.css?v=13">
+  <link rel="stylesheet" href="/style.css?v=14">
 </head>
 <body>
   <main id="login" class="card narrow hidden">
@@ -239,6 +239,14 @@
         <button data-open="dlg-dest" class="">+ Add destination</button>
       </section>
 
+      <section class="card" data-tab="destinations" id="events-card">
+        <h2>Events (public watch page)</h2>
+        <p class="muted">Share a link where people register, see a countdown and watch your live. Add your YouTube / Twitch / Facebook live link.</p>
+        <ul id="event-list" class="list"></ul>
+        <p id="event-empty" class="muted hidden">No events yet.</p>
+        <button data-open="dlg-event">+ New event</button>
+      </section>
+
       <section class="card" data-tab="videos">
         <h2>Videos</h2>
         <p class="muted">Upload a recorded video, then schedule it to go live.</p>
@@ -354,6 +362,19 @@
           <label class="switch"><input type="checkbox" name="delete_after" checked> Delete the video after the live ends</label>
           <button type="submit">Schedule</button>
           <p id="sched-error" class="error"></p>
+        </form>
+</div></dialog>
+  <dialog class="modal" id="dlg-event"><div class="modal-head"><h2>New event</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">
+<form id="event-form" class="stack">
+          <label>Title <input name="title" maxlength="100" required></label>
+          <label>Description <textarea name="description" rows="3" maxlength="600"></textarea></label>
+          <label>Start time (your local time) <input name="start" id="event-start" type="datetime-local" required></label>
+          <label>Live link (YouTube, Twitch or Facebook) <input name="embed" type="url" placeholder="https://youtube.com/live/..."></label>
+          <p class="sub">You can leave the link empty now and edit it after you go live.</p>
+          <label>Remind me (minutes before) <input name="remind" type="number" min="1" max="1440" value="15"></label>
+          <label class="switch"><input type="checkbox" name="phone"> Ask visitors for a phone number</label>
+          <button type="submit">Create event</button>
+          <p id="event-error" class="error"></p>
         </form>
 </div></dialog>
   <dialog class="modal" id="dlg-user"><div class="modal-head"><h2>Add team member</h2><button class="ghost" data-close aria-label="Close">&times;</button></div><div class="modal-body">

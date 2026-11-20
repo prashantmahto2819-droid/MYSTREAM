@@ -76,6 +76,28 @@ CREATE TABLE IF NOT EXISTS recordings (
   started_at INTEGER NOT NULL,
   ended_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  start_at INTEGER NOT NULL,
+  embed_type TEXT NOT NULL DEFAULT '',
+  embed_ref TEXT NOT NULL DEFAULT '',
+  ask_phone INTEGER NOT NULL DEFAULT 0,
+  remind_minutes INTEGER NOT NULL DEFAULT 15,
+  reminded INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+);
+CREATE TABLE IF NOT EXISTS registrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
+);
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL DEFAULT (datetime('now')),
@@ -313,6 +335,29 @@ function makeStore(db) {
     deleteRecording: (id) => q('DELETE FROM recordings WHERE id = ?').run(id),
     listOpenRecordings: () => q("SELECT * FROM recordings WHERE status = 'recording'").all(),
     listOldRecordings: (olderThanMs) => q("SELECT * FROM recordings WHERE status = 'done' AND ended_at < ?").all(olderThanMs),
+
+    // ---- events (public watch pages) ----
+    createEvent({ userId, slug, title, description, startAt, embedType, embedRef, askPhone, remindMinutes }) {
+      const r = q(`INSERT INTO events (user_id,slug,title,description,start_at,embed_type,embed_ref,ask_phone,remind_minutes)
+                   VALUES (?,?,?,?,?,?,?,?,?)`).run(userId, slug, title, description, startAt, embedType, embedRef, askPhone, remindMinutes);
+      return Number(r.lastInsertRowid);
+    },
+    getEvent: (id) => q('SELECT * FROM events WHERE id = ?').get(id),
+    getEventBySlug: (slug) => q('SELECT * FROM events WHERE slug = ?').get(slug),
+    listEvents: (userId) => (userId == null
+      ? q('SELECT e.*, (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id) AS regs FROM events e ORDER BY start_at DESC LIMIT 100').all()
+      : q('SELECT e.*, (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id) AS regs FROM events e WHERE user_id = ? ORDER BY start_at DESC LIMIT 100').all(userId)),
+    updateEvent(id, f) {
+      q(`UPDATE events SET title=?, description=?, start_at=?, embed_type=?, embed_ref=?, ask_phone=?, remind_minutes=?, reminded=0 WHERE id=?`)
+        .run(f.title, f.description, f.startAt, f.embedType, f.embedRef, f.askPhone, f.remindMinutes, id);
+    },
+    deleteEvent: (id) => q('DELETE FROM events WHERE id = ?').run(id),
+    listEventsToRemind: (now) => q('SELECT * FROM events WHERE reminded = 0 AND start_at > ? AND start_at - remind_minutes * 60000 <= ?').all(now, now),
+    markEventReminded: (id) => q('UPDATE events SET reminded = 1 WHERE id = ?').run(id),
+    addRegistration: ({ eventId, name, email, phone }) => Number(q('INSERT INTO registrations (event_id,name,email,phone) VALUES (?,?,?,?)').run(eventId, name, email, phone).lastInsertRowid),
+    countRegistrations: (eventId) => q('SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?').get(eventId).n,
+    hasRegistration: (eventId, email, phone) => !!q('SELECT 1 FROM registrations WHERE event_id = ? AND ((? != \'\' AND email = ?) OR (? != \'\' AND phone = ?))').get(eventId, email, email, phone, phone),
+    listRegistrations: (eventId) => q('SELECT id,name,email,phone,created_at FROM registrations WHERE event_id = ? ORDER BY id').all(eventId),
 
     getSetting: (key) => q('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null,
     setSetting: (key, value) => q('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value),

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live event</title>
+  <link rel="stylesheet" href="/style.css?v=14">
+</head>
+<body>
+  <main class="card watch top6">
+    <h1 id="w-title">Loading...</h1>
+    <p id="w-desc" class="muted"></p>
+    <p id="w-when" class="sub"></p>
+    <div id="w-count" class="countdown hidden"></div>
+    <div id="w-player" class="player hidden"><iframe id="w-frame" title="Live" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
+    <form id="w-form" class="stack hidden">
+      <h2>Register</h2>
+      <label>Your name <input name="name" maxlength="80" required></label>
+      <label>Email <input name="email" type="email" maxlength="120"></label>
+      <label id="w-phone-row" class="hidden">WhatsApp / phone <input name="phone" inputmode="tel" maxlength="20" placeholder="+91..."></label>
+      <button type="submit">Register</button>
+      <p id="w-msg" class="sub"></p>
+    </form>
+    <p id="w-done" class="ok hidden">You are registered. Keep this page open, the live starts here.</p>
+  </main>
+  <script src="/watch.js?v=1" type="module"></script>
+</body>
+</html>

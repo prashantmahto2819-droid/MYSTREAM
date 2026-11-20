@@ -125,7 +125,7 @@ async function refresh() {
     }));
     $('analytics-total').textContent = `Total: ${an.totals.lives} lives, ${an.totals.minutes} minutes streamed from the browser studio.`;
   } catch { /* analytics is optional */ }
-  await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings()]);
+  await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings(), refreshEvents()]);
   renderScheduleChoices(s.destinations);
   if (me.role === 'admin') await refreshUsers();
 }
@@ -308,6 +308,38 @@ $('schedule-form').addEventListener('submit', async (e) => {
     await refresh();
   } catch (err) { $('sched-error').textContent = err.message; }
 });
+
+// ---- Events (public watch pages) ----
+async function refreshEvents() {
+  const list = await api('GET', '/api/events');
+  $('event-list').replaceChildren(...list.map((e) => {
+    const url = `${location.origin}${e.path}`;
+    return el('li', {},
+      el('div', { class: 'grow' }, e.title,
+        el('div', { class: 'sub' }, `${new Date(e.start_at).toLocaleString()} · ${e.regs} registered`),
+        el('div', { class: 'sub' }, url)),
+      el('button', { class: 'ghost', onclick: async (ev) => { try { await navigator.clipboard.writeText(url); ev.target.textContent = 'Copied'; setTimeout(() => { ev.target.textContent = 'Copy link'; }, 1200); } catch { prompt('Copy this link', url); } } }, 'Copy link'),
+      el('button', { class: 'ghost', onclick: () => { const link = prompt('Live link (YouTube / Twitch / Facebook)', ''); if (link === null) return; api('PUT', `/api/events/${e.id}`, { embed_url: link, title: e.title, description: e.description, start_at: e.start_at, ask_phone: e.ask_phone, remind_minutes: e.remind_minutes }).then(refreshEvents).catch((err) => alert(err.message)); } }, 'Set live link'),
+      el('a', { class: 'btnlink', href: `/api/events/${e.id}/registrations.csv` }, 'Download list'),
+      el('button', { class: 'danger', onclick: async () => { if (!confirm(`Delete "${e.title}"?`)) return; try { await api('DELETE', `/api/events/${e.id}`); await refreshEvents(); } catch (err) { alert(err.message); } } }, 'Delete'));
+  }));
+  $('event-empty').classList.toggle('hidden', list.length > 0);
+}
+$('event-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('event-error').textContent = '';
+  const f = new FormData(e.target);
+  try {
+    await api('POST', '/api/events', {
+      title: f.get('title'), description: f.get('description'), start_at: new Date(f.get('start')).getTime(),
+      embed_url: f.get('embed') || '', remind_minutes: Number(f.get('remind')), ask_phone: f.get('phone') === 'on',
+    });
+    e.target.reset();
+    closeDlg('dlg-event');
+    await refreshEvents();
+  } catch (err) { $('event-error').textContent = err.message; }
+});
+document.querySelector('[data-open="dlg-event"]').addEventListener('click', () => { $('event-start').value = defaultStart(); });
 
 $('phone-form').addEventListener('submit', async (e) => {
   e.preventDefault();

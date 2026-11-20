@@ -17,6 +17,7 @@ import { Notifier } from './notify.js';
 import { Recorder } from './recorder.js';
 import { relayEventHandler, playerEventHandler, recorderEventHandler, standbyEventHandler } from './alerts.js';
 import { Standby } from './standby.js';
+import { validateEvent, newSlug, embedUrl, clean, EventReminders } from './events.js';
 import { makeOAuth, OAuthError } from './oauth.js';
 import {
   PRESETS, cleanPlatform, validateRtmpUrl, validateStreamKey,
@@ -40,6 +41,7 @@ const CHUNK_SIZE = 8 * 1024 * 1024;
 
 export function createApp({ cfg, store, relay, internalToken, processor, player, log = console, spawn, standby = null, oauth = null }) {
   const vault = relay.vault;
+  const regHits = new Map(); // ip -> timestamps (event registrations)
   const loginFails = new Map(); // "ip|email" -> { n, until }
 
   const routes = [];
@@ -657,6 +659,83 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     send(res, 200, { ok: true });
   });
 
+
+  // ---------- events: public watch pages ----------
+  const eventView = (e) => ({
+    id: e.id, slug: e.slug, path: `/e/${e.slug}`, title: e.title, description: e.description, start_at: e.start_at,
+    embed_type: e.embed_type, embed_ref: e.embed_ref, ask_phone: !!e.ask_phone, remind_minutes: e.remind_minutes, regs: e.regs ?? store.countRegistrations(e.id),
+  });
+  const ownedEvent = (user, id) => {
+    const e = store.getEvent(Number(id));
+    if (!e || (e.user_id !== user.id && user.role !== 'admin')) throw new HttpError(404, 'Not found');
+    return e;
+  };
+  const embedLink = (e) => (e.embed_type === 'youtube' ? `https://youtu.be/${e.embed_ref}` : e.embed_type === 'twitch' ? `https://twitch.tv/${e.embed_ref}` : e.embed_ref);
+  route('GET', '/api/events', async (_req, res, { user }) => send(res, 200, store.listEvents(user.role === 'admin' ? null : user.id).map(eventView)));
+  route('POST', '/api/events', async (req, res, { user, viaKey }) => {
+    needSession({ viaKey });
+    const v = validateEvent(await readJson(req));
+    if (v.error) throw new HttpError(400, v.error);
+    const id = store.createEvent({ userId: user.id, slug: newSlug(), ...v.value });
+    store.addActivity(user.id, 'event_created', v.value.title);
+    send(res, 201, eventView(store.getEvent(id)));
+  });
+  route('PUT', '/api/events/:id', async (req, res, { user, params }) => {
+    const e = ownedEvent(user, params.id);
+    const b = await readJson(req);
+    const v = validateEvent({ embed_url: embedLink(e), ...b }, Date.now(), true);
+    if (v.error) throw new HttpError(400, v.error);
+    store.updateEvent(e.id, v.value);
+    send(res, 200, eventView(store.getEvent(e.id)));
+  });
+  route('DELETE', '/api/events/:id', async (_req, res, { user, params }) => {
+    const e = ownedEvent(user, params.id);
+    store.deleteEvent(e.id);
+    store.addActivity(user.id, 'event_deleted', e.title);
+    send(res, 200, { ok: true });
+  });
+  route('GET', '/api/events/:id/registrations', async (_req, res, { user, params }) => {
+    const e = ownedEvent(user, params.id);
+    send(res, 200, store.listRegistrations(e.id));
+  });
+  route('GET', '/api/events/:id/registrations.csv', async (_req, res, { user, params }) => {
+    const e = ownedEvent(user, params.id);
+    const cell = (v) => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`; return `"${t.replace(/"/g, '""')}"`; };
+    const rows = [['Name', 'Email', 'Phone', 'Registered at'], ...store.listRegistrations(e.id).map((r) => [r.name, r.email, r.phone, new Date(r.created_at).toISOString()])];
+    send(res, 200, rows.map((r) => r.map(cell).join(',')).join('\n'), { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="registrations-${e.slug}.csv"` });
+  }, {});
+
+  route('GET', '/api/public/event/:slug', async (req, res, { params }) => {
+    const e = store.getEventBySlug(params.slug);
+    if (!e) throw new HttpError(404, 'Event not found');
+    const now = Date.now();
+    const open = now >= e.start_at - 10 * 60000; // the player address is only handed out near the start time
+    send(res, 200, {
+      title: e.title, description: e.description, start_at: e.start_at, now, ask_phone: !!e.ask_phone,
+      embed: open ? embedUrl(e.embed_type, e.embed_ref, String(req.headers.host || 'localhost')) : '',
+    });
+  }, { auth: false });
+  route('POST', '/api/public/event/:slug/register', async (req, res, { params }) => {
+    const e = store.getEventBySlug(params.slug);
+    if (!e) throw new HttpError(404, 'Event not found');
+    const ip = clientIp(req); const now = Date.now();
+    const h = (regHits.get(ip) || []).filter((t) => now - t < 3600000);
+    if (h.length >= 20) throw new HttpError(429, 'Too many registrations. Try later.');
+    regHits.set(ip, [...h, now]);
+    const b = await readJson(req);
+    const name = clean(b.name, 80);
+    if (!name) throw new HttpError(400, 'Please enter your name');
+    const email = clean(b.email, 120).toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Email looks wrong');
+    const phone = clean(b.phone, 20).replace(/[\s()-]/g, '');
+    if (phone && !/^\+?\d{8,15}$/.test(phone)) throw new HttpError(400, 'Phone number looks wrong');
+    if (!email && !phone) throw new HttpError(400, 'Please enter your email or phone');
+    if (store.hasRegistration(e.id, email, phone)) return send(res, 200, { ok: true, already: true });
+    if (store.countRegistrations(e.id) >= 5000) throw new HttpError(400, 'Registrations are full');
+    store.addRegistration({ eventId: e.id, name, email, phone });
+    send(res, 201, { ok: true });
+  }, { auth: false });
+
   // ---------- static files ----------
   const serveStatic = (req, res) => {
     const urlPath = new URL(req.url, 'http://x').pathname;
@@ -677,6 +756,12 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'");
     try {
       const pathname = new URL(req.url, 'http://x').pathname;
+      if ((req.method === 'GET' || req.method === 'HEAD') && /^\/e\/[a-z0-9]{3,20}$/.test(pathname)) {
+        // Public event page: may embed YouTube / Twitch / Facebook players.
+        res.setHeader('content-security-policy', "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; frame-src https://www.youtube.com https://player.twitch.tv https://www.facebook.com; frame-ancestors 'none'");
+        res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store' });
+        return fs.createReadStream(path.join(PUBLIC_DIR, 'watch.html')).pipe(res);
+      }
       if ((req.method === 'GET' || req.method === 'HEAD') && !pathname.startsWith('/api/') && !pathname.startsWith('/internal/') && pathname !== '/healthz') {
         return serveStatic(req, res);
       }
@@ -753,6 +838,8 @@ async function main() {
   player.start();
   processor.resume();
   recorder.start();
+  const reminders = new EventReminders({ store, notifier });
+  reminders.start();
 
   const housekeeping = () => {
     store.purgeSessions();
@@ -780,6 +867,7 @@ async function main() {
     standby.shutdown();
     player.shutdown();
     recorder.shutdown();
+    reminders.stop();
     processor.shutdown();
     await relay.shutdown();
     server.close(() => process.exit(0));

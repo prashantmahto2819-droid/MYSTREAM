@@ -213,3 +213,11 @@ If the app restarts with "unable to open database file", the data folder belongs
 - Destinations > **+ Add channel**: connect YouTube, Facebook Pages (all Pages you manage) or Twitch with one click, or pick any other platform (Instagram, LinkedIn, X, TikTok, Kick, Rumble, Amazon Live, Telegram, Custom) to add it with its RTMP address and stream key.
 - The first time, the admin enters the Client ID / secret of the Google, Facebook or Twitch app inside the dashboard (step-by-step guide with links is shown there). They are stored encrypted in the database; you no longer have to edit `.env`. Values in `.env` still work.
 - Instagram, LinkedIn, X and TikTok do not offer a public API to create lives, so they stay RTMP only.
+
+## Events: public watch / webinar page
+
+Destinations tab -> **Events** -> "+ New event". You get a public link `https://your-domain/e/<code>` with a countdown,
+a registration form (name + email, optional phone) and an embedded player of your YouTube / Twitch / Facebook live.
+- The player address is only handed out 10 minutes before the start time. You can add or change the live link later ("Set live link").
+- "Download list" gives the registrations as CSV. You get a WhatsApp reminder (Vivid Relay alert) N minutes before the start.
+- Only YouTube, Twitch and Facebook https links are accepted. Registration is rate-limited per IP. The page has its own CSP that allows only those players.
