@@ -306,6 +306,13 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     }
     send(res, 200, { total: out.reduce((n, x) => n + x.viewers, 0), channels: out });
   });
+  route('POST', '/api/live-summary', async (req, res, ctx) => {
+    needSession(ctx);
+    const b = await readJson(req);
+    const peak = Math.min(Math.max(Math.floor(Number(b.peak)) || 0, 0), 10_000_000);
+    if (peak > 0) store.addActivity(ctx.user.id, 'live_summary', `peak ${peak} viewers`);
+    send(res, 200, { ok: true });
+  });
   route('DELETE', '/api/connections/:id', async (_req, res, ctx) => {
     needSession(ctx); needOAuth();
     const c = store.getConnection(Number(ctx.params.id));

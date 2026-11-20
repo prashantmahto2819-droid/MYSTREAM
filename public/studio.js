@@ -790,7 +790,10 @@ function cleanup(reason) {
     setTimeout(() => { if (!st.live && !st.ws) goLive(); }, 3000);
   }
 }
-function stopLive() { try { st.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* ignore */ } setTimeout(() => cleanup('Stopped'), 500); }
+function stopLive() {
+  if (st.peak > 0) { fetch('/api/live-summary', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-requested-with': 'vivid' }, body: JSON.stringify({ peak: st.peak }) }).catch(() => {}); }
+  st.peak = 0;
+  try { st.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* ignore */ } setTimeout(() => cleanup('Stopped'), 500); }
 
 // ---- unified live chat (YouTube through your connected channel, Twitch read-only) ----
 const chat = { items: [], tw: null, ytId: null, ytRun: 0 };
@@ -960,7 +963,7 @@ function init() {
   st.viewers = null;
   const pollViewers = async () => {
     if (!st.live) { st.viewers = null; return; }
-    try { const r = await fetch('/api/viewers', { credentials: 'same-origin', headers: { 'x-requested-with': 'vivid' } }); if (r.ok) st.viewers = await r.json(); } catch { /* ignore */ }
+    try { const r = await fetch('/api/viewers', { credentials: 'same-origin', headers: { 'x-requested-with': 'vivid' } }); if (r.ok) { st.viewers = await r.json(); st.peak = Math.max(st.peak || 0, st.viewers.total || 0); } } catch { /* ignore */ }
   };
   setInterval(pollViewers, 20000);
   $('st-start').addEventListener('click', () => setTimeout(pollViewers, 8000));

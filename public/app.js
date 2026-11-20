@@ -121,9 +121,9 @@ async function refresh() {
     const an = await api('GET', '/api/analytics'); const max = Math.max(1, ...an.days.map((d) => d.minutes));
     $('analytics').replaceChildren(...an.days.slice().reverse().map((d) => {
       const bar = el('span', { class: 'bar' }); bar.style.width = `${Math.round((d.minutes / max) * 100)}%`;
-      return el('li', {}, el('span', { class: 'sub' }, d.date), el('span', { class: 'grow' }, `${d.lives} live${d.lives === 1 ? '' : 's'}, ${d.minutes} min`), el('span', { class: 'barbox' }, bar));
+      return el('li', {}, el('span', { class: 'sub' }, d.date), el('span', { class: 'grow' }, `${d.lives} live${d.lives === 1 ? '' : 's'}, ${d.minutes} min${d.peak ? `, peak ${d.peak} viewers` : ''}`), el('span', { class: 'barbox' }, bar));
     }));
-    $('analytics-total').textContent = `Total: ${an.totals.lives} lives, ${an.totals.minutes} minutes streamed from the browser studio.`;
+    $('analytics-total').textContent = `Total: ${an.totals.lives} lives, ${an.totals.minutes} minutes streamed from the browser studio.${an.totals.peak ? ` Best viewer peak: ${an.totals.peak}.` : ''}`;
   } catch { /* analytics is optional */ }
   await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings(), refreshEvents()]);
   renderScheduleChoices(s.destinations);

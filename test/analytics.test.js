@@ -15,7 +15,16 @@ test('analytics: counts lives and minutes per day, ignores other actions', () =>
   assert.deepEqual(r.days.map((d) => d.date), ['2026-11-17', '2026-11-18', '2026-11-19']);
   assert.deepEqual(r.days.map((d) => d.lives), [0, 1, 1]);
   assert.equal(r.days[2].minutes, 30);
-  assert.deepEqual(r.totals, { lives: 2, minutes: 30 });
+  assert.deepEqual(r.totals, { lives: 2, minutes: 30, peak: 0 });
+});
+
+test('analytics: best viewer peak per day', () => {
+  const now = Date.parse('2026-11-19T10:00:00Z');
+  const r = summarize([
+    { ts: '2026-11-19 08:00:00', action: 'live_summary', detail: 'peak 40 viewers' },
+    { ts: '2026-11-19 09:00:00', action: 'live_summary', detail: 'peak 120 viewers' },
+  ], { days: 2, now });
+  assert.equal(r.days[1].peak, 120); assert.equal(r.totals.peak, 120);
 });
 
 test('analytics: store query returns only live-related rows for that user', () => {

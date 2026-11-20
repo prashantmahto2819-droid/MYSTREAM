@@ -227,3 +227,5 @@ a registration form (name + email, optional phone) and an embedded player of you
 
 While you are live in the browser studio, the **Stats** panel shows the viewers on your connected YouTube and Twitch channels (refreshed every 20 s,
 total plus per channel). Facebook has no simple viewer count, so it is not shown.
+
+The Activity tab's 14-day list also shows the **peak viewers** of each day (recorded when you press Stop in the studio).

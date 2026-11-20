@@ -375,7 +375,7 @@ function makeStore(db) {
         : q(`${sql} WHERE a.user_id = ? ORDER BY a.id DESC LIMIT ?`).all(userId, limit);
     },
     activitySince(userId, days = 14) {
-      const sql = "SELECT ts, action, detail FROM activity WHERE ts >= datetime('now', ?) AND action IN ('studio_started','studio_stopped','obs_live_started')";
+      const sql = "SELECT ts, action, detail FROM activity WHERE ts >= datetime('now', ?) AND action IN ('studio_started','studio_stopped','obs_live_started','live_summary')";
       const since = `-${Number(days) + 1} days`;
       return userId == null ? q(sql).all(since) : q(`${sql} AND user_id = ?`).all(since, userId);
     },
