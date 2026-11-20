@@ -382,6 +382,7 @@ function makeStore(db) {
     trimActivity: (keep = 5000) =>
       q('DELETE FROM activity WHERE id <= (SELECT COALESCE(MAX(id),0) - ? FROM activity)').run(keep),
 
+    backupTo(file) { db.exec(`VACUUM INTO '${String(file).replace(/'/g, "''")}'`); },
     close: () => db.close(),
   };
 }

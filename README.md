@@ -236,3 +236,7 @@ The Activity tab's 14-day list also shows the **peak viewers** of each day (reco
 - **Captions download**: Tools panel -> Download captions (.srt) or transcript (.txt) of what the live captions heard.
 - **Remembers your destinations**: the last ticked destinations are pre-ticked next time.
 - **Setup checklist** (Settings tab): plain-language list of what is ready and what to do (engine, channels, site address/https, WhatsApp alerts, phone, recording).
+
+## Backup and calendar
+- **Settings -> Download database backup** (admin only): a consistent copy of the database. Videos/recordings are in `./data` (back that folder up too). The file is only readable with your `APP_SECRET`, so keep both safe.
+- Event pages have an **Add to calendar** button (.ics with a 15-minute alarm).

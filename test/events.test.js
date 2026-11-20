@@ -21,7 +21,7 @@ async function boot() {
     const text = await res.text(); let json; try { json = JSON.parse(text); } catch { json = null; }
     return { status: res.status, json, text, headers: res.headers };
   };
-  return { store, uid, other, call, cookie: (id) => `sid=${store.createSession(id, 3600000)}` };
+  return { store, uid, other, port, call, cookie: (id) => `sid=${store.createSession(id, 3600000)}` };
 }
 
 test('parseEmbed accepts only YouTube / Twitch / Facebook https links', () => {
@@ -111,4 +111,21 @@ test('readiness: plain-language checklist reflects the setup', async () => {
   assert.equal(Object.fromEntries(r2.json.items.map((i) => [i.id, i.ok])).destinations, true);
   assert.ok(r2.json.done > r.json.done);
   assert.equal((await t.call('GET', '/api/readiness')).status, 401);
+});
+
+test('calendar file and admin-only backup', async () => {
+  const t = await boot();
+  const soon = Date.now() + 3600_000;
+  const mk = await t.call('POST', '/api/events', { cookie: t.cookie(t.uid), body: { title: 'Live; ok, yes', description: 'Line1\nLine2', start_at: soon } });
+  const ics = await t.call('GET', `/api/public/event/${mk.json.slug}/calendar.ics`);
+  assert.equal(ics.status, 200); assert.match(ics.headers.get('content-type'), /text\/calendar/);
+  assert.match(ics.text, /BEGIN:VEVENT/); assert.ok(ics.text.includes('SUMMARY:Live\\; ok\\, yes')); assert.match(ics.text, /DTSTART:\d{8}T\d{6}Z/);
+  assert.equal((await t.call('GET', `/api/public/event/nope/calendar.ics`)).status, 404);
+  // first user is not admin in this fixture
+  assert.equal((await t.call('GET', '/api/backup', { cookie: t.cookie(t.uid) })).status, 403);
+  assert.equal((await t.call('GET', '/api/backup')).status, 401);
+  t.store.updateUser(t.uid, { role: 'admin' });
+  const b = await fetch(`http://127.0.0.1:${t.port}/api/backup`, { headers: { cookie: t.cookie(t.uid), 'x-requested-with': 'vivid' } });
+  assert.equal(b.status, 200);
+  assert.equal(Buffer.from(await b.arrayBuffer()).subarray(0, 15).toString(), 'SQLite format 3');
 });

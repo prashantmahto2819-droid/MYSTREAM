@@ -333,6 +333,8 @@
         <label>Stream key <div class="copy-row"><input id="ingest-key" type="password" readonly><button id="toggle-key" class="ghost">Show</button><button data-copy="ingest-key" class="ghost">Copy</button></div></label>
         <p><span id="ingest-badge" class="badge">Not receiving</span> <span id="mtx-badge" class="badge warn hidden">Relay engine offline</span></p>
         <button id="rotate" class="ghost">Generate new stream key</button>
+        <p><a class="btnlink" href="/api/backup" id="backup-link">Download database backup</a></p>
+        <p class="sub">Admin only. Keep the file private, it holds your saved channels and settings (readable only with your APP_SECRET).</p>
         <form id="phone-form" class="stack">
           <label>My WhatsApp number for alerts <input name="phone" id="phone" inputmode="tel" placeholder="919876543210"></label>
           <button type="submit" class="ghost">Save number</button>

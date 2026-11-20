@@ -12,6 +12,7 @@ async function load() {
   $('w-title').textContent = ev.title;
   $('w-desc').textContent = ev.description;
   $('w-when').textContent = `Starts ${new Date(ev.start_at).toLocaleString()}`;
+  $('w-cal').href = `/api/public/event/${slug}/calendar.ics`; $('w-cal').classList.remove('hidden');
   $('w-phone-row').classList.toggle('hidden', !ev.ask_phone);
   let reg = false; try { reg = localStorage.getItem(KEY) === '1'; } catch { /* ignore */ }
   $('w-form').classList.toggle('hidden', reg);

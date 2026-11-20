@@ -3,6 +3,7 @@ import { summarize } from './analytics.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { attachStudio } from './studio.js';
 import { attachGuests } from './guests.js';
 import { pipeline } from 'node:stream/promises';
@@ -738,6 +739,32 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     const rows = [['Name', 'Email', 'Phone', 'Registered at'], ...store.listRegistrations(e.id).map((r) => [r.name, r.email, r.phone, new Date(r.created_at).toISOString()])];
     send(res, 200, rows.map((r) => r.map(cell).join(',')).join('\n'), { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="registrations-${e.slug}.csv"` });
   }, {});
+
+  // Admin-only copy of the database (settings, channels, destinations, users). Keep it private: it is only readable with your APP_SECRET.
+  route('GET', '/api/backup', async (_req, res, ctx) => {
+    needSession(ctx); needAdmin(ctx.user);
+    const tmp = path.join(os.tmpdir(), `vs-backup-${crypto.randomUUID()}.db`);
+    try {
+      store.backupTo(tmp);
+      const data = fs.readFileSync(tmp);
+      store.addActivity(ctx.user.id, 'backup_downloaded');
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="vivid-stream-${new Date().toISOString().slice(0, 10)}.db"`, 'cache-control': 'no-store', 'content-length': data.length });
+      res.end(data);
+    } finally { fs.rmSync(tmp, { force: true }); }
+  });
+
+  // "Add to calendar" for an event page.
+  route('GET', '/api/public/event/:slug/calendar.ics', async (req, res, { params }) => {
+    const e = store.getEventBySlug(params.slug);
+    if (!e) throw new HttpError(404, 'Event not found');
+    const fmt = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const esc = (t) => String(t).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\r?\n/g, '\\n');
+    const url = `${cfg.publicBaseUrl || `http://${req.headers.host}`}/e/${e.slug}`;
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Vivid Stream//EN', 'BEGIN:VEVENT', `UID:${e.slug}@vivid-stream`, `DTSTAMP:${fmt(Date.now())}`,
+      `DTSTART:${fmt(e.start_at)}`, `DTEND:${fmt(e.start_at + 3600000)}`, `SUMMARY:${esc(e.title)}`, `DESCRIPTION:${esc(`${e.description}\n${url}`.trim())}`, `URL:${url}`,
+      'BEGIN:VALARM', 'TRIGGER:-PT15M', 'ACTION:DISPLAY', 'DESCRIPTION:Live starts soon', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    send(res, 200, ics, { 'content-type': 'text/calendar; charset=utf-8', 'content-disposition': `attachment; filename="${e.slug}.ics"` });
+  }, { auth: false });
 
   route('GET', '/api/public/event/:slug', async (req, res, { params }) => {
     const e = store.getEventBySlug(params.slug);
