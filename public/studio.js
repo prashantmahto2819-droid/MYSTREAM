@@ -19,7 +19,13 @@ const say = (m) => { $('st-msg').textContent = m || ''; const d = $('dlg-msg'); 
 const badge = (t, cls = '') => { const b = $('st-badge'); b.textContent = t; b.className = `badge ${cls}`; };
 
 function ensureAudio() {
-  if (!st.audioCtx) { st.audioCtx = new AudioContext(); st.dest = st.audioCtx.createMediaStreamDestination(); }
+  if (!st.audioCtx) {
+    st.audioCtx = new AudioContext(); st.dest = st.audioCtx.createMediaStreamDestination();
+    // master limiter: stops loud peaks (several mics + music + clips) from clipping the stream
+    const lim = st.audioCtx.createDynamicsCompressor();
+    lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.003; lim.release.value = 0.1;
+    lim.connect(st.dest); st.bus = lim;
+  }
   return st.audioCtx;
 }
 function addNode(node, key) {
@@ -27,13 +33,22 @@ function addNode(node, key) {
   st.mixed.get(key)?.disconnect(); st.gains.get(key)?.disconnect();
   const gain = ctx.createGain(); gain.gain.value = st.gains.get(key)?.userVolume ?? 1; gain.userVolume = gain.gain.value; gain.muted = st.gains.get(key)?.muted || false;
   if (gain.muted) gain.gain.value = 0;
-  node.connect(gain); gain.connect(st.dest);
+  node.connect(gain); gain.connect(st.bus || st.dest);
   const an = ctx.createAnalyser(); an.fftSize = 512; gain.connect(an); st.analysers.set(key, { an, buf: new Uint8Array(an.fftSize) });
   st.mixed.set(key, node); st.gains.set(key, gain); renderMixer();
 }
+// Voice polish: cuts low rumble (fans, desk bumps) and evens out loud / soft speech, like a podcast chain.
+function polish(ctx, src) {
+  if (!$('st-polish')?.checked) return src;
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -26; comp.knee.value = 18; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.25;
+  src.connect(hp); hp.connect(comp);
+  return comp;
+}
 function addAudio(stream, key) {
   if (!stream.getAudioTracks().length) return;
-  const ctx = ensureAudio(); const src = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+  const ctx = ensureAudio(); const src = polish(ctx, ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks())));
   if (key === 'cam') { const d = ctx.createDelay(1); d.delayTime.value = Number($('st-adelay').value) / 1000; src.connect(d); st.camDelay = d; addNode(d, key); return; }
   addNode(src, key);
 }
@@ -480,15 +495,32 @@ function drawCountdown(ctx) {
   if (left === 0 && st.timerEnd && $('st-timer-auto').checked) { st.timerEnd = 0; setScene('cam'); }
 }
 // ---- live captions (browser speech recognition) ----
-const cap = { rec: null, text: '', at: 0 };
+const cap = { rec: null, text: '', at: 0, log: [], t0: 0 };
 function startCaptions() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { $('st-cap').checked = false; return say('Captions need Chrome or Edge.'); }
   const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = $('st-cap-lang').value;
-  r.onresult = (e) => { let t = ''; for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript; cap.text = t.trim(); cap.at = Date.now(); };
+  r.onresult = (e) => {
+    let t = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      t += e.results[i][0].transcript;
+      if (e.results[i].isFinal) { const txt = e.results[i][0].transcript.trim(); if (txt) { if (!cap.t0) cap.t0 = Date.now(); cap.log.push({ at: Date.now(), text: txt }); if (cap.log.length > 5000) cap.log.shift(); } }
+    }
+    cap.text = t.trim(); cap.at = Date.now();
+  };
   r.onend = () => { if ($('st-cap').checked) { try { r.start(); } catch { /* ignore */ } } };
   r.onerror = (e) => { if (e.error === 'not-allowed') { $('st-cap').checked = false; say('Allow the microphone for captions.'); } };
   try { r.start(); cap.rec = r; } catch { /* ignore */ }
+}
+function srtTime(ms) { const p = (n, w = 2) => String(n).padStart(w, '0'); return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)},${p(ms % 1000, 3)}`; }
+function downloadTranscript(kind) {
+  if (!cap.log.length) return say('No captions yet. Turn on Live captions and speak first.');
+  const t0 = cap.log[0].at - 3000;
+  const out = kind === 'srt'
+    ? cap.log.map((l, i) => `${i + 1}\n${srtTime(Math.max(0, i ? cap.log[i - 1].at - t0 : 0))} --> ${srtTime(l.at - t0)}\n${l.text}\n`).join('\n')
+    : cap.log.map((l) => l.text).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([out], { type: 'text/plain;charset=utf-8' }));
+  a.download = `transcript-${new Date().toISOString().slice(0, 10)}.${kind === 'srt' ? 'srt' : 'txt'}`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 function stopCaptions() { const r = cap.rec; cap.rec = null; try { r?.stop(); } catch { /* ignore */ } cap.text = ''; }
 function wrapText(ctx, text, maxW) {
@@ -717,6 +749,8 @@ function pickMime() {
   return '';
 }
 
+let savedDests = null;
+try { const v = JSON.parse(localStorage.getItem('vs_dests') || 'null'); if (Array.isArray(v) && v.length) savedDests = new Set(v.map(String)); } catch { /* ignore */ }
 async function loadDests() {
   const res = await fetch('/api/status', { credentials: 'same-origin' });
   if (!res.ok) return;
@@ -737,7 +771,7 @@ async function loadDests() {
   }
   for (const d of on) {
     const l = document.createElement('label'); const i = document.createElement('input');
-    i.type = 'checkbox'; i.value = d.id; i.checked = prev.size ? prev.has(String(d.id)) : true; i.dataset.dest = d.id;
+    i.type = 'checkbox'; i.value = d.id; i.checked = prev.size ? prev.has(String(d.id)) : (savedDests ? savedDests.has(String(d.id)) : true); i.dataset.dest = d.id;
     l.append(i, document.createTextNode(` ${d.name}`)); box.append(l);
   }
 }
@@ -749,6 +783,7 @@ function goLive() {
   if (!mime) return say('This browser cannot record video. Use Chrome or Edge.');
   const ids = [...$('st-dests').querySelectorAll('input:checked')].map((i) => Number(i.value));
   if (!ids.length) return say('Tick at least one destination.');
+  try { localStorage.setItem('vs_dests', JSON.stringify(ids)); savedDests = new Set(ids.map(String)); } catch { /* ignore */ }
   ensureAudio(); st.audioCtx.resume();
   const hasAudio = st.mixed.size > 0;
   const height = Number($('st-quality').value);
@@ -766,7 +801,7 @@ function goLive() {
       rec.ondataavailable = (e) => {
         if (!e.data.size || ws.readyState !== 1) return;
         st.sent += e.data.size;
-        if (ws.bufferedAmount > 8 * 1024 * 1024) say('Your internet is too slow for this quality. Choose 480p.');
+        if (ws.bufferedAmount > 3 * 1024 * 1024) { st.slowSince = st.slowSince || Date.now(); if (Date.now() - st.slowSince > 10000) lowerQuality(); } else st.slowSince = 0;
         e.data.arrayBuffer().then((b) => ws.readyState === 1 && ws.send(b));
       };
       rec.start(1000); st.rec = rec; st.live = true; st.t0 = Date.now(); st.sent = 0; st.retries = 0;
@@ -777,8 +812,19 @@ function goLive() {
   ws.onclose = () => cleanup(st.live ? 'Connection lost' : '');
   ws.onerror = () => say('Could not connect to the server.');
 }
+// Network guard: if the upload stays backed up for 10 s, restart one quality step lower (a short blip, but no more freezing).
+function lowerQuality() {
+  st.slowSince = 0;
+  const sel = $('st-quality'); const steps = [1080, 720, 480]; const i = steps.indexOf(Number(sel.value));
+  if (i < 0 || i >= steps.length - 1 || !st.live || st.guarding) return say('Your internet is too slow. Turn off a camera or share less, or ask for a better connection.');
+  st.guarding = true; sel.value = String(steps[i + 1]);
+  toast(`Slow internet: switching to ${steps[i + 1]}p`);
+  try { st.ws?.send(JSON.stringify({ type: 'stop' })); } catch { /* ignore */ }
+  st.retries = 0;
+  setTimeout(() => { cleanup(''); setTimeout(() => { st.guarding = false; if (!st.live) goLive(); }, 2500); }, 400);
+}
 function cleanup(reason) {
-  const lost = st.live && reason === 'Connection lost';
+  const lost = st.live && reason === 'Connection lost' && !st.guarding;
   try { if (st.rec && st.rec.state !== 'inactive') st.rec.stop(); } catch { /* ignore */ }
   st.rec = null; st.live = false;
   badge('Off'); if (reason) say(reason);
@@ -967,6 +1013,8 @@ function init() {
   };
   setInterval(pollViewers, 20000);
   $('st-start').addEventListener('click', () => setTimeout(pollViewers, 8000));
+  $('st-cap-srt')?.addEventListener('click', () => downloadTranscript('srt'));
+  $('st-cap-txt')?.addEventListener('click', () => downloadTranscript('txt'));
   $('st-addcam').addEventListener('click', addCamera);
   $('st-addmic').addEventListener('click', addMic);
   $('st-media-loop').addEventListener('change', (e) => { if (media.el?.pause) media.el.loop = e.target.checked; });

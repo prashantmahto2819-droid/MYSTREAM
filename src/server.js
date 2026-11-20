@@ -167,6 +167,24 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     });
   });
 
+  // A plain-language "is everything set up?" list for the Settings tab.
+  route('GET', '/api/readiness', async (_req, res, { user }) => {
+    const dests = store.listDestinations(user.id);
+    const conns = oauth ? store.listConnections(user.id) : [];
+    const base = (oauth?.setupStatus?.().publicBaseUrl) || cfg.publicBaseUrl || '';
+    const items = [
+      { id: 'mediamtx', ok: relay.apiOk !== false, title: 'Streaming engine (MediaMTX) is running', fix: 'Run: docker compose up -d, then check docker compose logs mediamtx.' },
+      { id: 'destinations', ok: dests.some((d) => d.enabled), title: 'At least one enabled destination', fix: 'Destinations tab -> + Add channel or + Add destination.' },
+      { id: 'channels', ok: conns.length > 0, title: 'A YouTube / Facebook / Twitch channel is connected (one-click keys, chat, viewers)', fix: 'Destinations tab -> + Add channel.' },
+      { id: 'baseurl', ok: !!base, title: 'Site address (PUBLIC_BASE_URL / https) is set', fix: 'Set PUBLIC_BASE_URL in .env (https://your-domain) or save it in the Add channel setup popup.' },
+      { id: 'alerts', ok: !!cfg.alertUrl, title: 'WhatsApp alert endpoint is configured', fix: 'Set ALERT_WEBHOOK_URL (your Vivid Relay send address) in .env.' },
+      { id: 'phone', ok: !!user.phone, title: 'Your phone number is saved for alerts', fix: 'Settings tab -> WhatsApp alerts -> save your number with country code.' },
+      { id: 'record', ok: !!user.record, title: 'Recording of OBS lives is on (backup copy)', fix: 'Settings tab -> turn on recording.' },
+      { id: 'https', ok: base ? base.startsWith('https://') : false, title: 'Dashboard is served over https', fix: 'Put Cloudflare Tunnel or Caddy in front so the address starts with https://.' },
+    ];
+    send(res, 200, { items, done: items.filter((i) => i.ok).length, total: items.length });
+  });
+
   route('POST', '/api/me/rotate-ingest-key', async (_req, res, ctx) => {
     needSession(ctx);
     const { user } = ctx;

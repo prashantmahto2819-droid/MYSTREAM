@@ -229,3 +229,10 @@ While you are live in the browser studio, the **Stats** panel shows the viewers 
 total plus per channel). Facebook has no simple viewer count, so it is not shown.
 
 The Activity tab's 14-day list also shows the **peak viewers** of each day (recorded when you press Stop in the studio).
+
+## Quality upgrades (from comparing StreamYard / Restream / OBS)
+- **Voice polish** (Audio panel): high-pass filter (cuts rumble) + compressor (evens loud and soft speech) on every microphone, plus a **master limiter** so music, clips and several mics never clip.
+- **Network guard**: if the upload stays backed up for 10 s while live, the studio restarts itself one quality step lower (1080 -> 720 -> 480) instead of freezing.
+- **Captions download**: Tools panel -> Download captions (.srt) or transcript (.txt) of what the live captions heard.
+- **Remembers your destinations**: the last ticked destinations are pre-ticked next time.
+- **Setup checklist** (Settings tab): plain-language list of what is ready and what to do (engine, channels, site address/https, WhatsApp alerts, phone, recording).

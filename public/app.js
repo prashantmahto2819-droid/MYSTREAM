@@ -125,7 +125,7 @@ async function refresh() {
     }));
     $('analytics-total').textContent = `Total: ${an.totals.lives} lives, ${an.totals.minutes} minutes streamed from the browser studio.${an.totals.peak ? ` Best viewer peak: ${an.totals.peak}.` : ''}`;
   } catch { /* analytics is optional */ }
-  await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings(), refreshEvents()]);
+  await Promise.all([refreshVideos(), refreshSchedules(), refreshStorage(), refreshRecordings(), refreshEvents(), refreshReadiness()]);
   renderScheduleChoices(s.destinations);
   if (me.role === 'admin') await refreshUsers();
 }
@@ -310,6 +310,14 @@ $('schedule-form').addEventListener('submit', async (e) => {
 });
 
 // ---- Events (public watch pages) ----
+async function refreshReadiness() {
+  try {
+    const r = await api('GET', '/api/readiness');
+    $('readiness').replaceChildren(el('li', {}, el('strong', { class: 'grow' }, `${r.done} of ${r.total} ready`)),
+      ...r.items.map((i) => el('li', {}, el('span', { class: `badge ${i.ok ? 'live' : 'error'}` }, i.ok ? 'OK' : 'To do'),
+        el('div', { class: 'grow' }, i.title, i.ok ? '' : el('div', { class: 'sub' }, i.fix)))));
+  } catch { /* optional */ }
+}
 async function refreshEvents() {
   const list = await api('GET', '/api/events');
   $('event-list').replaceChildren(...list.map((e) => {

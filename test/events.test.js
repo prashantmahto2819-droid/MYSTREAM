@@ -97,3 +97,18 @@ test('reminder is sent once, shortly before the start', async () => {
   now += 60000; await r.tick(); assert.equal(sent.length, 1); assert.equal(direct.length, 1);
   assert.equal(normalizePhone('+91 98765-43210'), '919876543210'); assert.equal(normalizePhone('12'), '');
 });
+
+test('readiness: plain-language checklist reflects the setup', async () => {
+  const t = await boot();
+  const c = t.cookie(t.uid);
+  const r = await t.call('GET', '/api/readiness', { cookie: c });
+  assert.equal(r.status, 200);
+  const by = Object.fromEntries(r.json.items.map((i) => [i.id, i.ok]));
+  assert.equal(by.destinations, false); assert.equal(by.alerts, false); assert.equal(by.phone, false);
+  assert.ok(r.json.items.every((i) => i.ok || i.fix));
+  t.store.createDestination({ userId: t.uid, name: 'YT', platform: 'youtube', rtmpUrl: 'rtmp://a/b', keyEnc: 'x' });
+  const r2 = await t.call('GET', '/api/readiness', { cookie: c });
+  assert.equal(Object.fromEntries(r2.json.items.map((i) => [i.id, i.ok])).destinations, true);
+  assert.ok(r2.json.done > r.json.done);
+  assert.equal((await t.call('GET', '/api/readiness')).status, 401);
+});
