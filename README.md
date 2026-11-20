@@ -220,4 +220,5 @@ Destinations tab -> **Events** -> "+ New event". You get a public link `https://
 a registration form (name + email, optional phone) and an embedded player of your YouTube / Twitch / Facebook live.
 - The player address is only handed out 10 minutes before the start time. You can add or change the live link later ("Set live link").
 - "Download list" gives the registrations as CSV. You get a WhatsApp reminder (Vivid Relay alert) N minutes before the start.
+- People who register with a phone number also get the WhatsApp reminder (max 200 per event, sent slowly, 10-digit numbers are taken as +91). Set PUBLIC_BASE_URL so the message carries the link.
 - Only YouTube, Twitch and Facebook https links are accepted. Registration is rate-limited per IP. The page has its own CSP that allows only those players.

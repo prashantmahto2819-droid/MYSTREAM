@@ -4,7 +4,7 @@ import { openDb } from '../src/db.js';
 import { makeVault, hashPassword } from '../src/crypto.js';
 import { createApp } from '../src/server.js';
 import { RelayManager } from '../src/relay.js';
-import { parseEmbed, embedUrl, EventReminders } from '../src/events.js';
+import { parseEmbed, embedUrl, EventReminders, normalizePhone } from '../src/events.js';
 
 async function boot() {
   const store = openDb(':memory:'); const vault = makeVault('s'.repeat(20));
@@ -88,8 +88,12 @@ test('reminder is sent once, shortly before the start', async () => {
   let now = 1_800_000_000_000; const sent = [];
   const id = store.createEvent({ userId: uid, slug: 'abc', title: 'Live', description: '', startAt: now + 30 * 60000, embedType: '', embedRef: '', askPhone: 0, remindMinutes: 15 });
   store.addRegistration({ eventId: id, name: 'R', email: 'r@x.com', phone: '' });
-  const r = new EventReminders({ store, notifier: { send: async (u, m) => { sent.push(m); } }, now: () => now });
+  store.addRegistration({ eventId: id, name: 'P', email: '', phone: '9876543210' });
+  const direct = [];
+  const r = new EventReminders({ store, notifier: { send: async (u, m) => { sent.push(m); }, sendTo: async (n, m) => { direct.push([n, m]); } }, now: () => now, baseUrl: 'https://live.x.com' });
   await r.tick(); assert.equal(sent.length, 0);
-  now += 16 * 60000; await r.tick(); assert.equal(sent.length, 1); assert.match(sent[0], /Live/); assert.match(sent[0], /1/);
-  now += 60000; await r.tick(); assert.equal(sent.length, 1);
+  now += 16 * 60000; await r.tick(); assert.equal(sent.length, 1); assert.match(sent[0], /Live/); assert.match(sent[0], /2/);
+  assert.deepEqual(direct[0][0], ['919876543210']); assert.match(direct[0][1], /https:\/\/live\.x\.com\/e\/abc/);
+  now += 60000; await r.tick(); assert.equal(sent.length, 1); assert.equal(direct.length, 1);
+  assert.equal(normalizePhone('+91 98765-43210'), '919876543210'); assert.equal(normalizePhone('12'), '');
 });

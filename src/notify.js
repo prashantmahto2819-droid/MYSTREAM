@@ -38,7 +38,21 @@ export class Notifier {
       if (t && this.now() - t < this.cfg.alertCooldownMs) return { sent: 0, skipped: 'cooldown' };
       this.last.set(key, this.now());
     }
-    const to = this.recipients(userId);
+    return this.deliver(this.recipients(userId), message);
+  }
+
+  /** Sends to specific numbers, with a pause between messages (unofficial WhatsApp gateways get blocked when flooded). */
+  async sendTo(numbers, message, { gapMs = 3000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+    if (!this.cfg.alertUrl) return { sent: 0, skipped: 'not configured' };
+    let sent = 0;
+    for (const n of numbers) {
+      sent += (await this.deliver([n], message)).sent;
+      if (gapMs) await sleep(gapMs);
+    }
+    return { sent };
+  }
+
+  async deliver(to, message) {
     let sent = 0;
     for (const number of to) {
       try {

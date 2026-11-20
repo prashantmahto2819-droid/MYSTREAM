@@ -838,7 +838,7 @@ async function main() {
   player.start();
   processor.resume();
   recorder.start();
-  const reminders = new EventReminders({ store, notifier });
+  const reminders = new EventReminders({ store, notifier, baseUrl: cfg.publicBaseUrl });
   reminders.start();
 
   const housekeeping = () => {

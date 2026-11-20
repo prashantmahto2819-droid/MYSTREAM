@@ -56,7 +56,7 @@ export function validateEvent(b, now = Date.now(), allowPast = false) {
 
 /** Sends the owner a reminder shortly before an event starts. */
 export class EventReminders {
-  constructor({ store, notifier, now = Date.now, log = console }) { this.store = store; this.notifier = notifier; this.now = now; this.log = log; }
+  constructor({ store, notifier, now = Date.now, log = console, baseUrl = '' }) { this.baseUrl = baseUrl; this.store = store; this.notifier = notifier; this.now = now; this.log = log; }
   start() { this.timer = setInterval(() => this.tick().catch(() => {}), 30000); this.timer.unref?.(); }
   stop() { clearInterval(this.timer); }
   async tick() {
@@ -66,6 +66,19 @@ export class EventReminders {
       const mins = Math.max(0, Math.round((ev.start_at - this.now()) / 60000));
       this.store.addActivity(ev.user_id, 'event_reminder', ev.title);
       await this.notifier.send(ev.user_id, `⏰ इवेंट "${ev.title}" ${mins} मिनट में शुरू होगा. रजिस्ट्रेशन: ${n}.`).catch(() => {});
+      // People who registered with a phone number asked for this event's reminder: tell them too (max 200, slowly, in the background).
+      const phones = [...new Set(this.store.listRegistrations(ev.id).map((r) => normalizePhone(r.phone)).filter(Boolean))].slice(0, 200);
+      if (phones.length && this.notifier.sendTo) {
+        const link = this.baseUrl ? `\n${this.baseUrl}/e/${ev.slug}` : '';
+        this.notifier.sendTo(phones, `⏰ "${ev.title}" ${mins} मिनट में शुरू होगा.${link}`).catch(() => {});
+      }
     }
   }
+}
+
+/** Digits only, country code included; a bare 10-digit number is taken as Indian (+91). */
+export function normalizePhone(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  if (d.length === 10) return `91${d}`;
+  return d.length >= 11 && d.length <= 15 ? d : '';
 }
