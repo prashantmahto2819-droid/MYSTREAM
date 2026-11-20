@@ -170,6 +170,26 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     };
   }
 
+  // ---- concurrent viewers (YouTube, Twitch) ----
+  async function viewers(conn) {
+    if (conn.provider === 'google') {
+      const access = await googleAccess(conn); const h = { authorization: `Bearer ${access}` };
+      const api = 'https://www.googleapis.com/youtube/v3';
+      const b = await call(`${api}/liveBroadcasts?` + form({ part: 'id', broadcastStatus: 'active', mine: 'true' }), { headers: h }, 'Finding your live');
+      const ids = (b.items || []).map((x) => x.id).filter(Boolean).slice(0, 5);
+      if (!ids.length) return { live: false, viewers: 0 };
+      const v = await call(`${api}/videos?` + form({ part: 'liveStreamingDetails', id: ids.join(',') }), { headers: h }, 'Reading viewers');
+      return { live: true, viewers: (v.items || []).reduce((n, x) => n + (Number(x.liveStreamingDetails?.concurrentViewers) || 0), 0) };
+    }
+    if (conn.provider === 'twitch') {
+      const access = await twitchAccess(conn);
+      const r = await call(`https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(conn.remote_id)}`, { headers: { authorization: `Bearer ${access}`, 'client-id': cv('twitchClientId') } }, 'Reading viewers');
+      const st = r.data?.[0];
+      return { live: !!st, viewers: Number(st?.viewer_count) || 0 };
+    }
+    return null; // Facebook: no simple viewer count
+  }
+
   const create = (conn, opts) => (conn.provider === 'google' ? createYouTube(conn, opts) : conn.provider === 'twitch' ? createTwitch(conn, opts) : createFacebook(conn, opts));
 
   /** What the admin has set up (never the secrets themselves). */
@@ -185,5 +205,5 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     }
     for (const k of values.clear || []) if (KEYS.includes(k)) store.deleteSetting(`oauth_${k}`);
   }
-  return { configured, authUrl, handleCallback, create, youtubeChat, setupStatus, saveSetup, states };
+  return { configured, authUrl, handleCallback, create, youtubeChat, viewers, setupStatus, saveSetup, states };
 }

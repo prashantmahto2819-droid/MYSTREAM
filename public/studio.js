@@ -952,10 +952,18 @@ function init() {
     const mb = (st.sent / 1048576).toFixed(1); const kbps = secs ? Math.round((st.sent * 8) / 1000 / secs) : 0;
     const hms = `${String(Math.floor(secs / 3600)).padStart(2, '0')}:${String(Math.floor(secs / 60) % 60).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
     const health = !st.live ? 'Not live' : buf > 4096 ? 'Slow internet: lower the quality' : buf > 1024 ? 'Slightly slow' : 'Good';
-    const rows = [['Status', st.live ? 'LIVE' : 'Off'], ['Live time', hms], ['Sent', `${mb} MB`], ['Average bitrate', `${kbps} kbps`], ['Upload backlog', `${buf} KB`], ['Connection', health], ['Preview speed', `${fps} fps`], ['Canvas', `${W} x ${H}`], ['Guests', String(guests.size)], ['Cameras', String((st.camVideo ? 1 : 0) + st.extras.length)], ['Microphones', String([...st.gains.keys()].filter((k) => k === 'cam' || k.startsWith('mic:')).length)]];
+    const rows = [['Status', st.live ? 'LIVE' : 'Off'], ['Live time', hms], ['Sent', `${mb} MB`], ['Average bitrate', `${kbps} kbps`], ['Upload backlog', `${buf} KB`], ['Connection', health], ['Preview speed', `${fps} fps`], ['Canvas', `${W} x ${H}`], ['Guests', String(guests.size)], ...(st.viewers?.channels?.length ? [['Viewers (total)', String(st.viewers.total)], ...st.viewers.channels.map((c) => [`  ${c.provider === 'google' ? 'YouTube' : 'Twitch'}: ${c.account}`, c.error ? '?' : String(c.viewers)])] : []), ['Cameras', String((st.camVideo ? 1 : 0) + st.extras.length)], ['Microphones', String([...st.gains.keys()].filter((k) => k === 'cam' || k.startsWith('mic:')).length)]];
     const box = $('st-stats'); if (!box) return;
     box.replaceChildren(...rows.map(([k, v]) => { const li = document.createElement('li'); const a = document.createElement('span'); a.className = 'grow'; a.textContent = k; const b = document.createElement('strong'); b.textContent = v; li.append(a, b); return li; }));
   }, 1000);
+  // viewers on connected YouTube / Twitch channels (only asked while live)
+  st.viewers = null;
+  const pollViewers = async () => {
+    if (!st.live) { st.viewers = null; return; }
+    try { const r = await fetch('/api/viewers', { credentials: 'same-origin', headers: { 'x-requested-with': 'vivid' } }); if (r.ok) st.viewers = await r.json(); } catch { /* ignore */ }
+  };
+  setInterval(pollViewers, 20000);
+  $('st-start').addEventListener('click', () => setTimeout(pollViewers, 8000));
   $('st-addcam').addEventListener('click', addCamera);
   $('st-addmic').addEventListener('click', addMic);
   $('st-media-loop').addEventListener('change', (e) => { if (media.el?.pause) media.el.loop = e.target.checked; });

@@ -297,6 +297,15 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     let out; try { out = await oauth.youtubeChat(c, String(q.get('page') || '').slice(0, 300)); } catch (e) { oauthError(e); }
     send(res, 200, out);
   });
+  route('GET', '/api/viewers', async (_req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    const out = [];
+    for (const c of store.listConnections(ctx.user.id)) {
+      try { const v = await oauth.viewers(c); if (v) out.push({ provider: c.provider, account: c.account_name, ...v }); }
+      catch { out.push({ provider: c.provider, account: c.account_name, live: false, viewers: 0, error: true }); }
+    }
+    send(res, 200, { total: out.reduce((n, x) => n + x.viewers, 0), channels: out });
+  });
   route('DELETE', '/api/connections/:id', async (_req, res, ctx) => {
     needSession(ctx); needOAuth();
     const c = store.getConnection(Number(ctx.params.id));

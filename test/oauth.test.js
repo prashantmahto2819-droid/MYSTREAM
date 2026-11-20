@@ -21,8 +21,11 @@ function fakeNet(log) {
     }
     if (u.includes('/youtube/v3/channels')) return J({ items: [{ id: 'UC123', snippet: { title: 'Tukur Tukoor' } }] });
     if (u.includes('/liveStreams')) return J({ id: 'S1', cdn: { ingestionInfo: { ingestionAddress: 'rtmp://a.rtmp.youtube.com/live2', streamName: 'abcd-1234' } } });
-    if (u.includes('/liveBroadcasts?') && u.includes('broadcastStatus=active')) return J({ items: globalThis.__noLive ? [] : [{ snippet: { liveChatId: 'LC1' } }] });
+    if (u.includes('/liveBroadcasts?') && u.includes('broadcastStatus=active')) return J({ items: globalThis.__noLive ? [] : [{ id: 'B1', snippet: { liveChatId: 'LC1' } }] });
     if (u.includes('/liveChat/messages')) return J({ items: [{ id: 'm1', snippet: { displayMessage: 'Namaste' }, authorDetails: { displayName: 'Ravi' } }, { id: 'm2', snippet: {}, authorDetails: {} }], nextPageToken: 'NP', pollingIntervalMillis: 1000 });
+    if (u.includes('/liveBroadcasts?') && u.includes('part=id')) return J({ items: [{ id: 'B1' }] });
+    if (u.includes('/youtube/v3/videos')) return J({ items: [{ liveStreamingDetails: { concurrentViewers: '42' } }] });
+    if (u.startsWith('https://api.twitch.tv/helix/streams?')) return J({ data: [{ viewer_count: 8 }] });
     if (u.includes('/liveBroadcasts/bind')) return J({ id: 'B1' });
     if (u.includes('/liveBroadcasts')) return J({ id: 'B1' });
     if (u.includes('graph.facebook.com') && u.includes('oauth/access_token')) return J({ access_token: u.includes('fb_exchange_token') ? 'LONG' : 'SHORT' });
@@ -215,4 +218,23 @@ test('connections table accepts twitch and old databases are migrated', () => {
   assert.ok(store.upsertConnection({ userId: uid, provider: 'twitch', remoteId: '1', accountName: 'T', tokenEnc: 'x' }) > 0);
   assert.equal(store.getSetting('nope'), null);
   store.setSetting('k', 'v'); store.setSetting('k', 'v2'); assert.equal(store.getSetting('k'), 'v2');
+});
+
+test('viewers: YouTube and Twitch counts, Facebook skipped', async () => {
+  const t = setup();
+  for (const p of ['google', 'twitch', 'facebook']) {
+    const st = new URL(t.oauth.authUrl(p, t.uid)).searchParams.get('state');
+    await t.oauth.handleCallback(p, { code: 'c', state: st }, t.uid);
+  }
+  const conns = t.store.listConnections(t.uid).map((c) => t.store.getConnection(c.id));
+  const by = (p) => conns.find((c) => c.provider === p);
+  assert.deepEqual(await t.oauth.viewers(by('google')), { live: true, viewers: 42 });
+  assert.deepEqual(await t.oauth.viewers(by('twitch')), { live: true, viewers: 8 });
+  assert.equal(await t.oauth.viewers(by('facebook')), null);
+  globalThis.__noLive = true;
+  const t2 = setup();
+  const s2 = new URL(t2.oauth.authUrl('google', t2.uid)).searchParams.get('state');
+  await t2.oauth.handleCallback('google', { code: 'c', state: s2 }, t2.uid);
+  assert.deepEqual(await t2.oauth.viewers(t2.store.getConnection(t2.store.listConnections(t2.uid)[0].id)), { live: false, viewers: 0 });
+  globalThis.__noLive = false;
 });
