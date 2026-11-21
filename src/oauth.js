@@ -170,6 +170,27 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     };
   }
 
+  // ---- change title / description of the live that is running now ----
+  async function updateLive(conn, { title, description }) {
+    if (conn.provider === 'google') {
+      const access = await googleAccess(conn); const h = { authorization: `Bearer ${access}`, 'content-type': 'application/json' };
+      const api = 'https://www.googleapis.com/youtube/v3';
+      const b = await call(`${api}/liveBroadcasts?` + form({ part: 'id', broadcastStatus: 'active', mine: 'true' }), { headers: h }, 'Finding your live');
+      const id = b.items?.[0]?.id;
+      if (!id) throw new OAuthError('No live is running on this YouTube channel right now.');
+      const v = await call(`${api}/videos?` + form({ part: 'snippet', id }), { headers: h }, 'Reading the live');
+      const sn = v.items?.[0]?.snippet || {};
+      await call(`${api}/videos?part=snippet`, { method: 'PUT', headers: h, body: JSON.stringify({ id, snippet: { title, description: description ?? sn.description ?? '', categoryId: sn.categoryId || '22' } }) }, 'Updating the title');
+      return { ok: true };
+    }
+    if (conn.provider === 'twitch') {
+      const access = await twitchAccess(conn);
+      await call(`https://api.twitch.tv/helix/channels?broadcaster_id=${encodeURIComponent(conn.remote_id)}`, { method: 'PATCH', headers: { authorization: `Bearer ${access}`, 'client-id': cv('twitchClientId'), 'content-type': 'application/json' }, body: JSON.stringify({ title }) }, 'Updating the title');
+      return { ok: true };
+    }
+    throw new OAuthError('Changing the title is available for YouTube and Twitch.');
+  }
+
   // ---- concurrent viewers (YouTube, Twitch) ----
   async function viewers(conn) {
     if (conn.provider === 'google') {
@@ -205,5 +226,5 @@ export function makeOAuth({ cfg, store, vault, fetchImpl = fetch, now = Date.now
     }
     for (const k of values.clear || []) if (KEYS.includes(k)) store.deleteSetting(`oauth_${k}`);
   }
-  return { configured, authUrl, handleCallback, create, youtubeChat, viewers, setupStatus, saveSetup, states };
+  return { configured, authUrl, handleCallback, create, youtubeChat, viewers, updateLive, setupStatus, saveSetup, states };
 }

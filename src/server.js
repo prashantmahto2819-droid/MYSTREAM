@@ -316,6 +316,17 @@ export function createApp({ cfg, store, relay, internalToken, processor, player,
     let out; try { out = await oauth.youtubeChat(c, String(q.get('page') || '').slice(0, 300)); } catch (e) { oauthError(e); }
     send(res, 200, out);
   });
+  route('POST', '/api/live-info', async (req, res, ctx) => {
+    needSession(ctx); needOAuth();
+    const b = await readJson(req);
+    const c = store.getConnection(Number(b.connection));
+    if (!c || c.user_id !== ctx.user.id) throw new HttpError(404, 'Not found');
+    const title = clean(b.title, 100);
+    if (!title) throw new HttpError(400, 'Title is required');
+    try { await oauth.updateLive(c, { title, description: b.description == null ? undefined : clean(b.description, 4000) }); } catch (e) { oauthError(e); }
+    store.addActivity(ctx.user.id, 'live_title_changed', title);
+    send(res, 200, { ok: true });
+  });
   route('GET', '/api/viewers', async (_req, res, ctx) => {
     needSession(ctx); needOAuth();
     const out = [];

@@ -180,6 +180,12 @@
             <div class="row"><button id="st-draw" class="ghost">&#9998; Draw on screen</button><input id="st-pen" type="color" value="#ff3b30"><button id="st-clear" class="ghost">Clear drawing</button><button id="st-snap" class="ghost">Snapshot</button></div>
             <label class="switch"><input type="checkbox" id="st-cap"> Live captions</label>
             <label>Caption language <select id="st-cap-lang"><option value="hi-IN">Hindi</option><option value="en-IN">English (India)</option><option value="en-US">English (US)</option></select></label>
+            <h3>Change live title</h3>
+            <p class="muted">Changes the title of the live that is running now on your connected YouTube or Twitch channel.</p>
+            <label>Channel <select id="live-conn"></select></label>
+            <label>New title <input id="live-title" maxlength="100"></label>
+            <label>New description (YouTube only, optional) <textarea id="live-desc" rows="3" maxlength="4000"></textarea></label>
+            <button id="live-save" class="ghost">Update title</button>
             <div class="row"><button id="st-cap-srt" class="ghost">Download captions (.srt)</button><button id="st-cap-txt" class="ghost">Download transcript (.txt)</button></div>
             <p class="sub">Keys: 1-9 scenes, arrows change media, D draw, C clear drawing, S snapshot, M mute mic.</p>
           </section>
@@ -452,7 +458,7 @@
   <div id="toasts" popover="manual"></div>
   </div>
   <script src="/app.js?v=16" type="module"></script>
-  <script src="/studio.js?v=17" type="module"></script>
+  <script src="/studio.js?v=18" type="module"></script>
   <script src="/nav.js?v=13" type="module"></script>
 </body>
 </html>

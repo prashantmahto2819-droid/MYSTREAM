@@ -238,3 +238,18 @@ test('viewers: YouTube and Twitch counts, Facebook skipped', async () => {
   assert.deepEqual(await t2.oauth.viewers(t2.store.getConnection(t2.store.listConnections(t2.uid)[0].id)), { live: false, viewers: 0 });
   globalThis.__noLive = false;
 });
+
+test('updateLive: changes YouTube title and Twitch title', async () => {
+  const t = setup();
+  for (const p of ['google', 'twitch']) {
+    const st = new URL(t.oauth.authUrl(p, t.uid)).searchParams.get('state');
+    await t.oauth.handleCallback(p, { code: 'c', state: st }, t.uid);
+  }
+  const conns = t.store.listConnections(t.uid).map((c) => t.store.getConnection(c.id));
+  await t.oauth.updateLive(conns.find((c) => c.provider === 'google'), { title: 'Naya title', description: 'Desc' });
+  const put = t.log.find(([m, u]) => m === 'PUT' && u.includes('/youtube/v3/videos'));
+  assert.ok(put); assert.equal(JSON.parse(put[2]).snippet.title, 'Naya title'); assert.equal(JSON.parse(put[2]).id, 'B1');
+  await t.oauth.updateLive(conns.find((c) => c.provider === 'twitch'), { title: 'T2' });
+  assert.ok(t.log.some(([m, u, b]) => m === 'PATCH' && u.includes('/helix/channels') && JSON.parse(b).title === 'T2'));
+  await assert.rejects(() => t.oauth.updateLive({ provider: 'facebook' }, { title: 'x' }), /YouTube and Twitch/);
+});

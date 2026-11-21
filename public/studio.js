@@ -907,6 +907,8 @@ async function initChat() {
     const r = await fetch('/api/connections', { credentials: 'same-origin' }); if (!r.ok) return;
     const { connections } = await r.json();
     const sel = $('chat-yt'); sel.replaceChildren();
+    const ls = $('live-conn'); ls.replaceChildren();
+    for (const c of connections.filter((x) => x.provider === 'google' || x.provider === 'twitch')) { const o = document.createElement('option'); o.value = c.id; o.textContent = `${c.provider === 'google' ? 'YouTube' : 'Twitch'}: ${c.account_name}`; ls.append(o); }
     for (const c of connections.filter((x) => x.provider === 'google')) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.account_name; sel.append(o); }
   } catch { /* chat from YouTube is optional */ }
 }
@@ -1028,6 +1030,14 @@ function init() {
   };
   setInterval(pollViewers, 20000);
   $('st-start').addEventListener('click', () => setTimeout(pollViewers, 8000));
+  $('live-save').addEventListener('click', async () => {
+    const connection = Number($('live-conn').value); const title = $('live-title').value.trim();
+    if (!connection) return say('Connect a YouTube or Twitch channel first (Destinations tab).');
+    if (!title) return say('Write the new title.');
+    const r = await fetch('/api/live-info', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-requested-with': 'vivid' }, body: JSON.stringify({ connection, title, description: $('live-desc').value.trim() || undefined }) });
+    const d = await r.json().catch(() => ({}));
+    toast(r.ok ? 'Title updated' : (d.error || 'Could not update the title'));
+  });
   $('chat-clear').addEventListener('click', () => { chat.items.length = 0; showQueue.length = 0; $('chat-list').replaceChildren(); });
   $('st-cap-srt')?.addEventListener('click', () => downloadTranscript('srt'));
   $('st-cap-txt')?.addEventListener('click', () => downloadTranscript('txt'));

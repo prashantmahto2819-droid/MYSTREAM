@@ -243,3 +243,6 @@ The Activity tab's 14-day list also shows the **peak viewers** of each day (reco
 
 ## Chat tools (studio -> Live chat)
 Hide messages with your own blocked words, hide messages with links (on by default), **auto-show** new messages on the stream one by one (8 s each), message counter and Clear list.
+
+## Change the live title while live
+Studio -> Tools -> **Change live title**: pick the connected YouTube or Twitch channel, type the new title (and description for YouTube) and press Update. It changes the live that is running now.
