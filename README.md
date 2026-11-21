@@ -246,3 +246,6 @@ Hide messages with your own blocked words, hide messages with links (on by defau
 
 ## Change the live title while live
 Studio -> Tools -> **Change live title**: pick the connected YouTube or Twitch channel, type the new title (and description for YouTube) and press Update. It changes the live that is running now.
+
+## Home tab
+The dashboard now opens on **Home**: OBS live status, destinations on/live, upcoming events and registrations, the next planned events / scheduled video lives, and setup progress.

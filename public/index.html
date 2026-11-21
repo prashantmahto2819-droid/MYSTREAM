@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vivid Stream</title>
-  <link rel="stylesheet" href="/style.css?v=14">
+  <link rel="stylesheet" href="/style.css?v=15">
 </head>
 <body>
   <main id="login" class="card narrow hidden">
@@ -27,6 +27,7 @@
     <header>
       <strong>Vivid Stream</strong>
       <nav id="nav">
+        <button data-nav="home">Home</button>
         <button data-nav="studio">Go live</button>
         <button data-nav="destinations">Destinations</button>
         <button data-nav="videos">Videos &amp; schedule</button>
@@ -39,6 +40,22 @@
     </header>
 
     <main class="grid">
+      <section class="card wide" data-tab="home" id="home-card">
+        <h2>Today</h2>
+        <div class="tiles" id="home-tiles"></div>
+        <div class="row"><a class="btnlink" href="#studio">Open studio</a><button class="ghost" data-open="dlg-channel">+ Add channel</button><button class="ghost" data-open="dlg-event">+ New event</button></div>
+      </section>
+      <section class="card" data-tab="home">
+        <h2>Coming up</h2>
+        <ul id="home-next" class="list"></ul>
+        <p id="home-next-empty" class="muted hidden">Nothing planned. Create an event or schedule a video.</p>
+      </section>
+      <section class="card" data-tab="home">
+        <h2>Setup</h2>
+        <p id="home-setup" class="muted"></p>
+        <a class="btnlink" href="#settings">Open setup checklist</a>
+      </section>
+
       <section class="card wide hidden" id="standby-banner" data-tab="studio">
         <strong>Standby screen is live.</strong> <span class="muted">OBS is disconnected. Reconnect OBS and it takes over, or stop here.</span>
         <button id="standby-stop" class="danger">Stop standby (end live)</button>
@@ -457,7 +474,7 @@
 </div><div class="modal-foot"><button class="ghost" data-close>Close</button><button id="oauth-save">Save</button><button id="oauth-go" class="hidden">Connect now</button></div></dialog>
   <div id="toasts" popover="manual"></div>
   </div>
-  <script src="/app.js?v=16" type="module"></script>
+  <script src="/app.js?v=17" type="module"></script>
   <script src="/studio.js?v=18" type="module"></script>
   <script src="/nav.js?v=13" type="module"></script>
 </body>

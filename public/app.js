@@ -80,6 +80,7 @@ async function refresh() {
   badge.textContent = s.ingest.live ? 'Receiving your stream' : 'Not receiving';
   badge.className = 'badge' + (s.ingest.live ? ' live' : '');
   $('mtx-badge').classList.toggle('hidden', s.mediamtxOk !== false);
+  refreshHome(s);
   $('standby-banner').classList.toggle('hidden', !s.standby?.active);
 
   const list = $('dest-list');
@@ -310,6 +311,28 @@ $('schedule-form').addEventListener('submit', async (e) => {
 });
 
 // ---- Events (public watch pages) ----
+async function refreshHome(status) {
+  try {
+    const [evs, sch, rd] = await Promise.all([api('GET', '/api/events'), api('GET', '/api/schedules'), api('GET', '/api/readiness')]);
+    const now = Date.now();
+    const on = status.destinations.filter((d) => d.enabled).length;
+    const live = status.destinations.filter((d) => d.status === 'live' || d.status === 'running').length;
+    const tile = (label, value, cls = '') => el('div', { class: `tile ${cls}` }, el('div', { class: 'big' }, String(value)), el('div', { class: 'sub' }, label));
+    const upcoming = evs.filter((e) => e.start_at > now);
+    $('home-tiles').replaceChildren(
+      tile(status.ingest.live ? 'Receiving your OBS stream' : 'OBS stream', status.ingest.live ? 'LIVE' : 'Off', status.ingest.live ? 'on' : ''),
+      tile('Destinations on', `${on}${live ? ` (${live} live)` : ''}`),
+      tile('Upcoming events', upcoming.length),
+      tile('Registrations (all events)', evs.reduce((n, e) => n + e.regs, 0)));
+    const items = [
+      ...upcoming.map((e) => ({ at: e.start_at, text: `Event: ${e.title}`, sub: `${e.regs} registered` })),
+      ...sch.schedules.filter((x) => x.status === 'scheduled' || x.status === 'running').map((x) => ({ at: x.start_at, text: `Video live: ${x.title}`, sub: x.status === 'running' ? 'Live now' : 'Scheduled' })),
+    ].sort((a, b) => a.at - b.at).slice(0, 6);
+    $('home-next').replaceChildren(...items.map((i) => el('li', {}, el('div', { class: 'grow' }, i.text, el('div', { class: 'sub' }, `${fmtTime(i.at)} · ${i.sub}`)))));
+    $('home-next-empty').classList.toggle('hidden', items.length > 0);
+    $('home-setup').textContent = rd.done === rd.total ? 'Everything is set up.' : `${rd.done} of ${rd.total} ready. Finish the rest in Settings.`;
+  } catch { /* the Home tab is optional */ }
+}
 async function refreshReadiness() {
   try {
     const r = await api('GET', '/api/readiness');
