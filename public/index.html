@@ -187,6 +187,10 @@
             <h3>Live chat</h3>
             <p class="muted">Read chat from YouTube and Twitch here and press Show to put a message on the stream. Facebook chat is not available.</p>
                     <div class="row"><select id="chat-yt"></select><button id="chat-yt-go" class="ghost">Start YouTube chat</button><input id="chat-twitch" placeholder="Twitch channel" maxlength="25"><button id="chat-twitch-go" class="ghost">Start Twitch chat</button></div>
+                    <label>Hide messages with these words (comma separated) <input id="chat-block" maxlength="300" placeholder="spam, link, abuse words"></label>
+                    <label class="switch"><input type="checkbox" id="chat-auto"> Auto-show new messages on the stream, one by one</label>
+                    <label class="switch"><input type="checkbox" id="chat-links" checked> Hide messages that contain links</label>
+                    <div class="row"><span id="chat-count" class="sub">0 messages</span><button id="chat-clear" class="ghost">Clear list</button></div>
                     <ul id="chat-list" class="list scroll"></ul>
           </section>
 <section class="panel" data-panelbody="stats">
@@ -448,7 +452,7 @@
   <div id="toasts" popover="manual"></div>
   </div>
   <script src="/app.js?v=16" type="module"></script>
-  <script src="/studio.js?v=16" type="module"></script>
+  <script src="/studio.js?v=17" type="module"></script>
   <script src="/nav.js?v=13" type="module"></script>
 </body>
 </html>

@@ -843,7 +843,22 @@ function stopLive() {
 
 // ---- unified live chat (YouTube through your connected channel, Twitch read-only) ----
 const chat = { items: [], tw: null, ytId: null, ytRun: 0 };
+const blocked = (text) => {
+  const t = String(text).toLowerCase();
+  if ($('chat-links').checked && /https?:\/\/|www\.|\b[a-z0-9-]+\.(com|in|net|org|xyz|ru|me|io|co)\b/.test(t)) return true;
+  return $('chat-block').value.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean).some((w) => t.includes(w));
+};
+// Auto-show: new messages take turns on screen for 8 seconds each.
+const showQueue = [];
+setInterval(() => {
+  if (!$('chat-auto').checked || !showQueue.length || (chatMsg && chatMsg.until > Date.now())) return;
+  const m = showQueue.shift(); chatMsg = { author: m.author, text: m.text, until: Date.now() + 8000 };
+}, 500);
+let chatTotal = 0;
 function addChat(src, author, text) {
+  if (blocked(`${author} ${text}`)) return;
+  chatTotal += 1; $('chat-count').textContent = `${chatTotal} messages`;
+  if ($('chat-auto').checked && showQueue.length < 10) showQueue.push({ author, text });
   chat.items.push({ src, author, text }); if (chat.items.length > 120) chat.items.shift();
   const ul = $('chat-list'); const stick = ul.scrollTop + ul.clientHeight >= ul.scrollHeight - 30;
   ul.replaceChildren(...chat.items.map((m) => {
@@ -1013,6 +1028,7 @@ function init() {
   };
   setInterval(pollViewers, 20000);
   $('st-start').addEventListener('click', () => setTimeout(pollViewers, 8000));
+  $('chat-clear').addEventListener('click', () => { chat.items.length = 0; showQueue.length = 0; $('chat-list').replaceChildren(); });
   $('st-cap-srt')?.addEventListener('click', () => downloadTranscript('srt'));
   $('st-cap-txt')?.addEventListener('click', () => downloadTranscript('txt'));
   $('st-addcam').addEventListener('click', addCamera);

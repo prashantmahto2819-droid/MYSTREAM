@@ -240,3 +240,6 @@ The Activity tab's 14-day list also shows the **peak viewers** of each day (reco
 ## Backup and calendar
 - **Settings -> Download database backup** (admin only): a consistent copy of the database. Videos/recordings are in `./data` (back that folder up too). The file is only readable with your `APP_SECRET`, so keep both safe.
 - Event pages have an **Add to calendar** button (.ics with a 15-minute alarm).
+
+## Chat tools (studio -> Live chat)
+Hide messages with your own blocked words, hide messages with links (on by default), **auto-show** new messages on the stream one by one (8 s each), message counter and Clear list.
